@@ -1,0 +1,4 @@
+[submodule "docs/second_brain"]
+	path = docs/second_brain
+	url = https://github.com/FlavianMF/obisidian_vault.git
+	branch = master
