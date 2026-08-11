@@ -1,0 +1,8 @@
+services:
+  capella-mcp:
+    build: .
+    image: capella-mcp
+    volumes:
+      - ./tests/fixtures:/workspace/models
+    stdin_open: true
+    tty: true

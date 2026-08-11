@@ -1,0 +1,7 @@
+.git
+docs/second_brain
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+tests

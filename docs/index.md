@@ -42,7 +42,7 @@ Expor, via MCP, tools e resources que permitam a uma LLM:
 - **Lib de interface com o Capella**: `python4capella` (roda dentro do
   processo Eclipse/Capella via EASE+Py4J — ver
   [[0001-python4capella-nao-e-lib-externa]]).
-- **SDK MCP**: `mcp[cli]` (FastMCP), Python ≥3.10.
+- **SDK MCP**: `mcp[cli]` (`MCPServer`, `mcp.server.mcpserver`), Python ≥3.10.
 - **Empacotamento**: imagem Docker única (Capella + plugin + Xvfb + servidor
   MCP) — ver [[0003-empacotamento-docker]].
 - **Gerenciador de dependências**: `uv`.
