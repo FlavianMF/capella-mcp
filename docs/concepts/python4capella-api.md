@@ -74,3 +74,22 @@ Requer Capella instalado com o plugin `python4capella` e, no Linux, um
 display virtual (Xvfb) — mesmo em modo linha de comando o Capella exige
 GUI/window manager. Ver [[0003-empacotamento-docker]] para como isso é
 empacotado neste projeto.
+
+## Instalação do plugin (referência)
+
+Versão pinada: `python4capella` 1.4.1, instalado via `p2 director` direto
+no zip da release (sem precisar abrir a GUI do Capella):
+
+```
+xvfb-run -a /opt/capella/capella \
+  -application org.eclipse.equinox.p2.director \
+  -repository "jar:file:/tmp/python4capella.zip!/" \
+  -installIU org.eclipse.python4capella.feature.feature.group,org.eclipse.python4capella.commandline.feature.feature.group \
+  -destination /opt/capella \
+  -profile DefaultProfile \
+  -nosplash -consoleLog
+```
+
+`org.eclipse.python4capella.commandline.feature.feature.group` é o feature
+que registra o `-appid org.eclipse.python4capella.commandline` usado na
+invocação headless.

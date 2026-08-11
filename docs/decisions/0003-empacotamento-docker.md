@@ -22,9 +22,20 @@ decisão.
 
 ## Decisão
 
-Empacotar **tudo numa única imagem Docker**: JDK, Eclipse Capella, plugin
-`python4capella` (instalado via update site/p2 director no build),
-`Xvfb`/`xvfb-run`, Python 3.10+ com `mcp[cli]`, e o código do servidor MCP.
+Empacotar **tudo numa única imagem Docker** (base `debian:bookworm-slim`):
+Eclipse Capella **7.0.1** (build `7.0.1.202503211540`, JRE embutido no
+produto — não precisa de JDK à parte), plugin `python4capella` **1.4.1**
+(instalado via `p2 director` direto no `update.zip` da release, no build da
+imagem), `Xvfb`/`xvfb-run`, Python 3.10+ com `mcp[cli]` via `uv`, e o
+código do servidor MCP. Ver `Dockerfile` na raiz do projeto.
+
+Versão do Capella pinada em 7.0.1 (não a 7.1.0, mais recente) porque é a
+exatamente testada pela release 1.4.1 do `python4capella` (asset
+`report-7.0.1.xml` da release confirma), dentro da faixa suportada
+declarada no README do plugin (1.4.2–7.x). Debian bookworm escolhido em vez
+de Ubuntu 25.04+ porque o pacote `libwebkit2gtk-4.0-*` (exigido pelo
+browser embutido do RCP) foi removido em versões mais novas do Ubuntu (ver
+issue `eclipse-capella/capella#2946`).
 
 Modelos `.aird` vivem no host e entram via bind mount
 (`-v <host_dir>:/workspace/models`); o `model_path` recebido pelas tools é
