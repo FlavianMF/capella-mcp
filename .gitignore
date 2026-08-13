@@ -8,3 +8,6 @@ build/
 
 # workspace temporário usado pelo bridge headless (scripts + resultado JSON)
 .capella-workspace/
+
+# marcador de projeto Eclipse gerado em runtime por _ensure_models_project()
+tests/fixtures/.project

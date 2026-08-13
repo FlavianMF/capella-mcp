@@ -1,13 +1,15 @@
 """Integration tests against a real python4capella instance.
 
 Skipped automatically unless CAPELLA_BIN points at an actual Capella
-install (i.e. running inside the built image, not on a bare host) and a
-fixture model is present at tests/fixtures/demo.aird. Run via:
+install and a fixture model is present at tests/fixtures/demo.aird. Run
+via one of:
 
-    scripts/run_integration_tests.sh
+    scripts/run_integration_tests.sh        # builds the Docker image, runs inside a container
+    scripts/run_integration_tests_local.sh  # runs directly on the host against a local Capella install
 
-which builds the image and runs pytest inside a container of it, so
-CAPELLA_BIN/MODELS_ROOT resolve for real. See docs/decisions/0002-headless-por-chamada.md.
+either way so CAPELLA_BIN/MODELS_ROOT resolve for real. See
+docs/decisions/0002-headless-por-chamada.md and the "Atualização" note in
+docs/decisions/0003-empacotamento-docker.md.
 """
 
 from __future__ import annotations

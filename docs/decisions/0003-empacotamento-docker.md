@@ -63,3 +63,23 @@ mesmo container** — sem Docker-in-Docker.
   sem instalar Capella manualmente.
 - Fixa a versão do Capella e do plugin no `Dockerfile`, evitando "funciona
   na minha máquina" por divergência de versão.
+
+## Atualização (2026-08-12)
+
+O pressuposto original — "Capella não estava instalado no ambiente de
+desenvolvimento" — deixou de valer: Capella **7.1.0** + `python4capella`
+**1.4.1** foram instalados em `/home/flv/projetos_ita/capella` na máquina
+de dev. Isso não muda a decisão: Docker continua sendo o único caminho
+suportado para deploy/CI e para outros colaboradores rodarem o servidor
+sem setup manual.
+
+O install local passou a ser usado como **inner loop** opcional — rodar
+`bridge.py` e a suíte de integração (`scripts/run_integration_tests_local.sh`)
+sem `docker build` a cada iteração, apontando `CAPELLA_BIN`/`CAPELLA_MODELS_ROOT`
+(já env-var driven em `bridge.py`) pro install local em vez do
+`/opt/capella` do container. Nota lateral: no Linux não existe um binário
+`capellac` separado do `capella` (diferente do Windows, onde
+`capellac.exe` é a variante console) — o mesmo executável `./capella`
+serve GUI e headless; a menção a `capellac` acima na seção "Distribuição"
+reflete a nomenclatura do Windows/documentação genérica do produto, não
+o binário real no Linux.

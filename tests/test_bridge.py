@@ -29,6 +29,17 @@ def workspace_root(tmp_path, monkeypatch):
     return ws
 
 
+@pytest.fixture(autouse=True)
+def _stub_python4capella_project(tmp_path, monkeypatch):
+    """_run_script() always calls _ensure_python4capella_project(), which
+    normally extracts a project from the real plugin jar -- stub it out so
+    unit tests never touch a real Capella install, same as subprocess.run."""
+    fake = tmp_path / "Python4Capella"
+    fake.mkdir()
+    (fake / ".project").write_text("<fake/>")
+    monkeypatch.setattr(bridge, "_python4capella_project_dir", fake)
+
+
 def _run_writing(result_data: dict):
     """Fake subprocess.run that mimics a Capella process writing result.json."""
 
@@ -100,7 +111,7 @@ class TestGeneratedScripts:
 
         def _run(cmd, capture_output, text, timeout):
             call_dir = Path(cmd[cmd.index("-data") + 1])
-            script = (call_dir / "script.py").read_text()
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
             captured["script"] = script
             compile(script, "<script>", "exec")
             (call_dir / "result.json").write_text(json.dumps(result_data or {"ok": True}))
