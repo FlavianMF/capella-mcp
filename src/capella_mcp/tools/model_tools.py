@@ -159,6 +159,26 @@ def register(mcp: MCPServer) -> None:
         return bridge.create_class_diagram(model_path, layer, diagram_name, max_depth)
 
     @mcp.tool()
+    def create_capability_diagram(model_path: str, diagram_name: str | None = None) -> dict:
+        """Create a real Capella (Sirius) "Operational Capabilities Blank"
+        (OCB) diagram and save the model.
+
+        OA-layer only. Covers the whole forest of root Operational
+        Entities/Actors (like create_container_diagram's OperationalEntity
+        combination), and additionally nests each entity's involved
+        Operational Capabilities inside its container. A capability
+        involved by more than one entity appears once per involving entity
+        (valid Sirius behavior, not a duplicate bug).
+
+        KNOWN LIMITATION: same as create_container_diagram -- the diagram's
+        node/containment data is correct, but export_diagram's headless PNG
+        for it is expected to be blank (COC_OperationalEntities is a
+        ContainerMapping, the technology confirmed not to paint headless;
+        see create_container_diagram's docstring for the full explanation).
+        """
+        return bridge.create_capability_diagram(model_path, diagram_name)
+
+    @mcp.tool()
     def delete_diagram(model_path: str, diagram_uid: str) -> dict:
         """Delete a diagram from a Capella model and save the model.
 

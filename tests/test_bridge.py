@@ -457,3 +457,55 @@ class TestCreateClassDiagram:
         monkeypatch.setattr(bridge.subprocess, "run", _run)
         with pytest.raises(bridge.BridgeError, match="unknown layer"):
             bridge.create_class_diagram("demo.aird", "not-a-layer")
+
+
+class TestCreateCapabilityDiagram:
+    """create_capability_diagram (OCB) walks the same entity forest as
+    create_container_diagram's OperationalEntity entry, but also nests each
+    entity's involving capabilities -- and its createRepresentation target
+    is OperationalCapabilityPkg, not the entity/EntityPkg every other
+    diagram function in this module uses (confirmed live: those all
+    silently return None here)."""
+
+    def _mock_sequence(self, monkeypatch, results):
+        captured = {"scripts": []}
+        results_iter = iter(results)
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["scripts"].append(script)
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        return captured
+
+    def test_two_pass_round_trip(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {
+            "tree": [
+                {"id": "entity-a", "label": "Driver", "parent_id": None, "depth": 0, "kind": "Entity"},
+                {"id": "cap-a", "label": "Show Speed", "parent_id": "entity-a", "depth": 1, "kind": "Capability"},
+            ],
+            "diagram_name": "Operational Capabilities Blank - Operational Entities",
+        }
+        pass2_result = {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Operational Capabilities Blank - Operational Entities",
+            "node_count": 2,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        result = bridge.create_capability_diagram("demo.aird")
+
+        assert result == {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Operational Capabilities Blank - Operational Entities",
+            "node_count": 2,
+        }
+        assert len(captured["scripts"]) == 2
+        assert "COC_OperationalEntities" in captured["scripts"][0]
+        assert "COC_OperationalCapabilities" in captured["scripts"][0]
+        assert "get_involving_operational_capabilities" in captured["scripts"][0]
+        assert "get_operational_capability_pkg" in captured["scripts"][0]
+        assert "set_bounds" in captured["scripts"][1]

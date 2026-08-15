@@ -1648,6 +1648,189 @@ def create_class_diagram(
     }
 
 
+# Operational Capabilities Blank (OCB, oa.odesign). Gets its own function
+# rather than a CONTAINER_DIAGRAMS entry for two reasons: (1) its
+# containerMapping (COC_OperationalEntities) targets the same
+# OperationalEntity/OperationalActor types create_container_diagram's OAB
+# entry already owns as a dict key -- OAB and OCB are two DIFFERENT
+# representations over the SAME semantic types, which CONTAINER_DIAGRAMS'
+# (layer, type_name) keying can't express; (2) OCB isn't a homogeneous
+# containment tree -- a capability isn't a CHILD of the entity that "owns"
+# it, it's placed inside every entity it's INVOLVED with
+# (OperationalActor.get_involving_operational_capabilities(), confirmed to
+# exist and inherited by OperationalEntity), which can be more than one --
+# so this walks the same entity-forest shape as OAB, but at every entity
+# node ALSO attaches its involving capabilities as flat
+# COC_OperationalCapabilities nodes nested in that entity's container.
+#
+# KNOWN SIMPLIFICATION: a capability involved by more than one entity gets
+# a separate DNode under each (real, valid Sirius behavior, same semantic
+# element in multiple diagram elements) -- but since bounds/lookup here are
+# keyed by semantic id (same convention as every other diagram function in
+# this module), only one of the duplicates gets its bounds set in pass 2;
+# the other keeps Sirius' default position. Not fixed: the PNG is already
+# known-blank for this whole ContainerMapping family (same reasoning as
+# CONTAINER_DIAGRAMS' comment), so a bounds cosmetic detail for an
+# unrenderable image isn't worth an instance-unique-key redesign. The
+# underlying model data (which entities involve which capabilities) is
+# correct regardless.
+#
+# Communication-means edges (COC_CommunicationMeans) and capability-to-
+# capability relations (COC_OC_Extends/Include/Generalization) are not
+# collected -- only the core entity-involves-capability structure, same
+# "one representative edge/relation kind, not every possible one" scope
+# OAIB's "OAIB Interaction" already established.
+_CAPABILITY_DIAGRAM_NAME = "Operational Capabilities Blank"
+_CAPABILITY_ENTITY_MAPPING = "COC_OperationalEntities"
+_CAPABILITY_NODE_MAPPING = "COC_OperationalCapabilities"
+
+
+def create_capability_diagram(model_path: str, diagram_name: str | None = None) -> dict:
+    """Create a real Capella (Sirius) "Operational Capabilities Blank"
+    diagram and save the model -- the whole forest of root Operational
+    Entities/Actors (same as create_container_diagram's OperationalEntity
+    entry), each also showing the Operational Capabilities it's involved
+    with, nested inside its container.
+
+    OA-layer only (Operational Capabilities Blank is OA-specific, unlike
+    create_class_diagram's CDB).
+
+    KNOWN LIMITATION: same as create_container_diagram -- the diagram's
+    node/containment data is correct, but export_diagram's headless PNG
+    for it is expected to be blank (COC_OperationalEntities is a
+    ContainerMapping; see CONTAINER_DIAGRAMS' comment in this module).
+    """
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+
+    pass1_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            se = model.get_system_engineering()
+            oa = se.get_operational_analysis()
+
+            pkg = oa.get_entity_pkg()
+            roots = list(pkg.get_owned_entities())
+            if not roots:
+                raise ValueError("no root-level Operational Entity/Actor found")
+
+            repDef = get_representation_definition_by_name(model.session, {_CAPABILITY_DIAGRAM_NAME!r})
+            if repDef is None:
+                raise ValueError("representation definition not found: {_CAPABILITY_DIAGRAM_NAME}")
+            entityMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_ENTITY_MAPPING!r})
+            capabilityMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_NODE_MAPPING!r})
+            if entityMapping is None or capabilityMapping is None:
+                raise ValueError("container/node mapping not found: {_CAPABILITY_ENTITY_MAPPING}/{_CAPABILITY_NODE_MAPPING}")
+            resolved_diagram_name = {diagram_name!r} or f"{{{_CAPABILITY_DIAGRAM_NAME!r}}} - {{pkg.get_label()}}"
+
+            tree = []
+
+            def _walk_apply(el, container_java, parent_id, depth):
+                eid = _element_id(el)
+                tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth, "kind": "Entity"}})
+                dnode = apply_mapping(container_java, entityMapping, el.get_java_object())
+
+                if hasattr(el, "get_involving_operational_capabilities"):
+                    for cap in el.get_involving_operational_capabilities():
+                        cap_id = _element_id(cap)
+                        tree.append({{"id": cap_id, "label": cap.get_label() or cap_id, "parent_id": eid, "depth": depth + 1, "kind": "Capability"}})
+                        apply_mapping(dnode, capabilityMapping, cap.get_java_object())
+
+                if hasattr(el, "get_owned_entities"):
+                    for child in el.get_owned_entities():
+                        _walk_apply(child, dnode, eid, depth + 1)
+
+            model.start_transaction()
+            try:
+                # Unlike OAB/OAIB (create_container_diagram), neither a
+                # root Entity, the EntityPkg, nor the OA layer root are
+                # accepted here (createRepresentation returns None for all
+                # three, confirmed live via a diagnostic script trying 6
+                # candidates) -- OCB's actual domainClass is
+                # OperationalCapabilityPkg (makes sense: its primary
+                # semantic scope is the capabilities, entities are the
+                # cross-referenced/involved side).
+                java_diag = create_representation(model.session, oa.get_operational_capability_pkg(), repDef, resolved_diagram_name)
+                if java_diag is None:
+                    raise ValueError("createRepresentation returned None for {_CAPABILITY_DIAGRAM_NAME}")
+                for root in roots:
+                    _walk_apply(root, java_diag, None, 0)
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "tree": tree,
+                "diagram_name": resolved_diagram_name,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass1 = _run_script(pass1_body)
+
+    tree = pass1["tree"]
+    resolved_diagram_name = pass1["diagram_name"]
+    bounds_by_id = _layout_tree(tree)
+
+    pass2_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            bounds_by_id = {bounds_by_id!r}
+
+            diagrams = model.get_all_diagrams()
+            target = None
+            for d in diagrams:
+                if d.get_name() == {resolved_diagram_name!r}:
+                    target = d
+                    break
+            if target is None:
+                raise ValueError(f"diagram not found after pass 1: {resolved_diagram_name!r}")
+            java_diag = target.get_java_object().getRepresentation()
+
+            by_target_id = {{}}
+
+            def _collect(de):
+                if de.eClass().getName() != "DEdge":
+                    by_target_id[de.getTarget().getId()] = de
+                    if hasattr(de, "getOwnedDiagramElements"):
+                        for child in de.getOwnedDiagramElements():
+                            _collect(child)
+
+            for de in java_diag.getOwnedDiagramElements():
+                _collect(de)
+
+            model.start_transaction()
+            try:
+                for nid, bounds in bounds_by_id.items():
+                    dnode = by_target_id.get(nid)
+                    if dnode is not None:
+                        set_bounds(dnode, bounds)
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "diagram_uid": target.get_uid(),
+                "diagram_name": target.get_name(),
+                "node_count": len(by_target_id),
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass2 = _run_script(pass2_body)
+    return {
+        "diagram_uid": pass2["diagram_uid"],
+        "diagram_name": pass2["diagram_name"],
+        "node_count": pass2["node_count"],
+    }
+
+
 def list_diagrams(model_path: str) -> dict:
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)

@@ -153,6 +153,20 @@ class TestDiagrams:
         with pytest.raises(bridge.BridgeError, match="unknown layer"):
             bridge.create_class_diagram("car_hmi/car_hmi.aird", "not-a-layer")
 
+    def test_create_capability_diagram_data_is_correct(self):
+        """OCB, rooted at OperationalCapabilityPkg -- the one diagram
+        function in this module whose target isn't the entity/EntityPkg
+        every other one uses (regression guard for that)."""
+        created = bridge.create_capability_diagram("car_hmi/car_hmi.aird")
+        try:
+            assert created["node_count"] > 0
+
+            fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+            assert fetched["uid"] == created["diagram_uid"]
+            assert fetched["type"] == "Operational Capabilities Blank"
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
     def test_mode_state_machine_renders_non_blank_png(self):
         """("la", "Region") is NodeMapping (MSM_ModeState), not the
         ContainerMapping "Blank" family -- confirmed live to render
