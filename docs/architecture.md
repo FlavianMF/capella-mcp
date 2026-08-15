@@ -72,16 +72,17 @@ Tools (ações, leitura + escrita):
 - `create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)`
   — diagramas "Blank" (Sirius `ContainerMapping`): Operational Entity Blank
   (OAB) e Operational Activity Interaction Blank (OAIB, com edges de
-  functional exchange); PNG headless sempre em branco — limitação
-  confirmada universal do Sirius/GMF headless, não é bug daqui, ver
-  comentário de `CONTAINER_DIAGRAMS` em `bridge.py`
+  functional exchange); PNG renderiza corretamente headless — bug de PNG
+  em branco raiz-causado (debugger ao vivo na JVM headless) e corrigido via
+  `DiagramServices.createContainer()`, ver comentário de
+  `CONTAINER_DIAGRAMS` em `bridge.py`
 - `create_class_diagram(model_path, layer, diagram_name, max_depth)`
-  — Class Diagram Blank (CDB), árvore heterogênea DataPkg+Class; mesma
-  limitação de PNG em branco que `create_container_diagram`
+  — Class Diagram Blank (CDB), árvore heterogênea DataPkg+Class; mesmo fix
+  de `create_container_diagram`, PNG renderiza corretamente
 - `create_capability_diagram(model_path, diagram_name)`
   — Operational Capabilities Blank (OCB), só camada OA; entidades como
-  container + capacidades envolvidas aninhadas; mesma limitação de PNG em
-  branco
+  container + capacidades envolvidas aninhadas; mesmo fix, PNG renderiza
+  corretamente
 - `delete_diagram(model_path, diagram_uid)`
 - `export_diagram(model_path, image_format="PNG")`
 

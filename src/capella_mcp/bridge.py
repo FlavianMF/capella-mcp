@@ -337,45 +337,39 @@ BREAKDOWN_DIAGRAMS = {
 }
 
 # CONTAINER_DIAGRAMS: the "Blank" family of OA representations (Operational
-# Entity Blank, Operational Capabilities Blank, etc.) use Sirius
-# ContainerMapping instead of NodeMapping -- apply_mapping() in
-# python4capella's simplified_api/diagram.py genuinely special-cases this
-# (produces a DNodeContainer instead of a DNode, and accepts a
-# DNodeContainer as the `container` arg for nesting), so it is real,
-# working support, not a workaround.
+# Entity Blank, Operational Activity Interaction Blank, etc.) use Sirius
+# ContainerMapping instead of NodeMapping.
 #
-# KNOWN LIMITATION (2026-08-15, confirmed universal -- not an
-# Entity-domain quirk): every ContainerMapping-produced DNodeContainer's
-# GMF Figure fails to paint in headless Capella, exactly like the
-# NodeMapping case documented below for OperationalEntity/OperationalActor
-# breakdown diagrams. This was re-tested live this session against a
-# domain that has NOTHING to do with Entity and is independently proven to
-# render correctly via NodeMapping (OperationalActivity, the same type
-# OAB_OperationalActivity/"Operational Activity Breakdown" renders fine
-# for): created a real "Operational Activity Interaction Blank"
-# representation, applied its ContainerMapping ("OAIB Operational
-# Activity") to a root OperationalActivity, set_bounds correctly (3-pass
-# create+reopen+reopen, same materialization requirement as breakdown
-# diagrams), exported -- PNG came back a bare drop-shadow fragment, same
-# family of blank as the Entity case, not proof of an Entity-specific bug.
-# Conclusion: this is a universal headless Sirius/GMF Figure-materialization
-# gap for ContainerMapping specifically, independent of domain class.
-# NodeMapping-based diagrams are unaffected (all 9 BREAKDOWN_DIAGRAMS
-# entries except the one documented OperationalEntity/OperationalActor
-# case render correctly).
+# RESOLVED (2026-08-15): every ContainerMapping-produced DNodeContainer
+# used to export as a blank PNG headless -- confirmed universal across
+# unrelated domains (Entity via OAB_Entity1, OperationalActivity via OAIB's
+# container mapping), so not an Entity-domain quirk. Root-caused via a live
+# JDWP debugger attached to the headless JVM (breakpoint on
+# org.eclipse.gmf.runtime.notation.impl.NodeImpl.<init>, filtered out the
+# ~100 hits from the model file's own XML parsing on open): python4capella's
+# apply_mapping() (simplified_api/diagram.py) creates the DNodeContainer via
+# raw EMF instantiation and never populates ownedStyle (only happens if a
+# `customizations` dict is passed, which no call site in this module does)
+# -- it never routes through Sirius's real element-creation service. The
+# GMF view model itself (container AND its label view, via
+# DNodeContainerNameViewFactory) turned out to materialize correctly and
+# completely even so, headless, no workbench required -- ruling out every
+# "EditPart/canonical-sync doesn't run headless" theory. The actual gap was
+# narrower than that: just the wrong creation call.
 #
-# This does NOT mean container diagrams aren't worth creating. The
-# diagram's semantic data (real containment/nesting, real Sirius
-# DRepresentation) is correct and complete -- get_diagram/list_elements see
-# it fine, and it would very plausibly render normally if the model were
-# later opened in the real (non-headless, interactive) Capella desktop:
-# the one native "trigger a repaint" call python4capella exposes,
-# Sirius.open_representation(), was live-tested and is a silent no-op
-# specifically because headless RCP has no real workbench/PartService to
-# open an editor into -- implying an actual editor open (which only a real
-# GUI session provides) is what's missing, not something wrong with the
-# model data itself. Only export_diagram's headless PNG preview is
-# affected.
+# THE FIX: org.polarsys.capella.core.sirius.analysis.DiagramServices
+# .getDiagramServices().createContainer(mapping, modelElement, container,
+# diagram) is Capella's own public service method -- the same one its
+# interactive UI calls -- and routes through the real
+# DDiagramSynchronizer/DDiagramElementSynchronizer.createNewNode() pipeline.
+# Verified live against two cases (flat container, nested parent/child):
+# both rendered with a real border, fill, icon, and full label text,
+# byte-size in the same range as always-working NodeMapping diagrams. No
+# patch needed to python4capella or Capella -- DiagramServices is already
+# public and already on the classpath every headless call loads. NodeMapping
+# and EdgeMapping creation elsewhere in this module still use apply_mapping()
+# since those were never observed broken (NodeMapping's own canonical-sync
+# auto-populates and fully materializes regardless of this gap).
 #
 # create_container_diagram() below implements this technology for:
 #   - ("oa", "OperationalEntity")/("oa", "OperationalActor") -> "Operational
@@ -393,32 +387,23 @@ BREAKDOWN_DIAGRAMS = {
 #     has an edge_mapping, so create_container_diagram optionally collects
 #     cross-activity functional-exchange relations (same logic
 #     create_diagram's include_relations already uses) and wires them as
-#     edges between the activity containers. Not re-tested for PNG paint
-#     separately -- OAIB's own container mapping is literally what the
-#     universal-not-Entity-specific finding above was tested against, so
-#     it's already confirmed blank, same reasoning applies to its edges.
+#     edges between the activity containers (still via apply_mapping(), edges
+#     were never part of the broken-paint gap).
 #
-# Other "Blank" diagram kinds researched but not implemented yet:
-#   - Operational Role Blank (ORB): blocked, not a limitation of this
-#     module -- python4capella's simplified_api/capella.py has NO wrapper
-#     class for OperationalRole at all (confirmed by grep across the whole
-#     source tree), so there is no semantic element to target apply_mapping
-#     with in the first place. Would need the underlying addon extended,
-#     out of reach from this bridge.
-#   - Operational Capabilities Blank (OCB): semantic content places
-#     capabilities (nodeMapping COC_OperationalCapabilities) INSIDE the
-#     entity container(s) they're involved with (OperationalActor.
-#     get_involving_operational_capabilities(), confirmed to exist) rather
-#     than following one single children_method recursively like every
-#     other entry here -- a capability can be involved by more than one
-#     entity, so it isn't even tree-shaped (would need to decide whether to
-#     duplicate the node per involving entity). Deferred, not attempted.
+# Operational Capabilities Blank (OCB) and Class Diagram Blank (CDB) are
+# implemented too, but as their own dedicated functions
+# (create_capability_diagram, create_class_diagram) since neither fits this
+# dict's single-container-mapping tree shape -- see their own comments/
+# docstrings. Both use the same DiagramServices.createContainer() fix.
+# Mode State Machine (MSM/"State Machine") is a BREAKDOWN_DIAGRAMS entry
+# instead (NodeMapping, never affected by this bug in the first place).
 #
-# Class Diagram Blank (CDB) and Mode State Machine (MSM/"State Machine")
-# are implemented too, but as their own dedicated functions
-# (create_class_diagram, and a BREAKDOWN_DIAGRAMS entry respectively) since
-# neither fits this dict's single-container-mapping tree shape -- see their
-# own comments/docstrings.
+# Still blocked, unrelated to this fix: Operational Role Blank (ORB) --
+# python4capella's simplified_api/capella.py has NO wrapper class for
+# OperationalRole at all (confirmed by grep across the whole source tree),
+# so there is no semantic element to target any creation call with in the
+# first place. Would need the underlying addon extended, out of reach from
+# this bridge.
 CONTAINER_DIAGRAMS = {
     ("oa", "OperationalEntity"): {
         "diagram": "Operational Entity Blank",
@@ -1257,8 +1242,8 @@ def create_container_diagram(
     max_depth: int | None = None,
 ) -> dict:
     """Create a real Capella (Sirius) "Blank" diagram -- the ContainerMapping
-    family (Operational Entity Blank today; see CONTAINER_DIAGRAMS' comment
-    for what else was researched and why it's not implemented yet), as
+    family (Operational Entity Blank, Operational Activity Interaction
+    Blank; see CONTAINER_DIAGRAMS' comment for the full picture), as
     opposed to create_diagram's NodeMapping-based "breakdown" trees.
 
     Unlike create_diagram, this walks and populates the WHOLE forest of
@@ -1267,16 +1252,9 @@ def create_container_diagram(
     structure, same as Capella's own "New Diagram > Operational Entity
     Blank" wizard entry would from the Entities package).
 
-    KNOWN LIMITATION, same as create_diagram's OperationalEntity/
-    OperationalActor breakdown entries and confirmed to generalize to this
-    whole diagram family (see the long comment above CONTAINER_DIAGRAMS):
-    the created diagram's node/containment data is correct, but
-    export_diagram's headless PNG for it will be blank -- a genuine
-    headless Sirius/GMF limitation for ContainerMapping-produced elements,
-    not a bug in this bridge. The diagram is still real, valid Capella
-    model content (get_diagram/list_elements see it fine, and it would
-    plausibly render normally if opened in the real interactive Capella
-    desktop).
+    Renders correctly headless (see CONTAINER_DIAGRAMS' comment for the
+    root-cause investigation and fix -- DiagramServices.createContainer()
+    instead of python4capella's apply_mapping()).
     """
     if layer not in LAYER_METHODS:
         raise BridgeError(f"unknown layer {layer!r}, expected one of {sorted(LAYER_METHODS)}")
@@ -1327,6 +1305,20 @@ def create_container_diagram(
                 if edgeMapping is None:
                     raise ValueError(f"edge mapping not found: {{cfg['edge_mapping']}}")
 
+            # DiagramServices.createContainer() (Capella's own public
+            # service, not python4capella's apply_mapping()) is what fixes
+            # the known-blank-PNG limitation documented above: it routes
+            # through the real DDiagramSynchronizer/DDiagramElementSynchronizer
+            # pipeline instead of apply_mapping()'s raw EMF instantiation,
+            # which never gets ownedStyle populated and never gets a fully
+            # materialized GMF view. Confirmed live (2026-08-15): identical
+            # containers created via apply_mapping() exported blank;
+            # created via this call, they render with a real border, fill,
+            # icon, and label -- both flat and nested. Edges/NodeMapping
+            # nodes elsewhere in this module still use apply_mapping()
+            # since those were never observed broken.
+            diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+
             tree = []
             elements_by_id = {{}}
             dnodes_by_id = {{}}
@@ -1335,7 +1327,7 @@ def create_container_diagram(
                 eid = _element_id(el)
                 tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth}})
                 elements_by_id[eid] = el
-                dnode = apply_mapping(container_java, containerMapping, el.get_java_object())
+                dnode = diagram_services.createContainer(containerMapping, el.get_java_object(), container_java, java_diag)
                 dnodes_by_id[eid] = dnode
                 if max_depth is not None and depth >= max_depth:
                     return
@@ -1490,13 +1482,10 @@ def create_container_diagram(
 # function rather than forcing that config table to express two node
 # kinds for just this one case.
 #
-# Same known limitation as CONTAINER_DIAGRAMS (see its comment): both
-# DT_DataPkg and DT_Class are ContainerMappings, so this diagram's headless
-# PNG export is expected to be blank too -- not re-tested live (the
-# universal-not-Entity-specific finding already covers "ContainerMapping
-# doesn't paint headless" broadly enough that re-confirming per mapping
-# name would just re-run the same disproven-territory check). The
-# diagram's data (real nested DataPkg/Class containment) is correct.
+# Same fix as CONTAINER_DIAGRAMS (see its comment): both DT_DataPkg and
+# DT_Class are ContainerMappings, so element creation below uses
+# DiagramServices.createContainer() instead of apply_mapping() -- renders
+# correctly headless, verified live.
 _CLASS_DIAGRAM_NAME = "Class Diagram Blank"
 _CLASS_DIAGRAM_PKG_MAPPING = "DT_DataPkg"
 _CLASS_DIAGRAM_CLASS_MAPPING = "DT_Class"
@@ -1514,11 +1503,8 @@ def create_class_diagram(
 
     layer must be one of: oa, sa, la, pa, epbs (every layer has a DataPkg).
 
-    KNOWN LIMITATION: same as create_container_diagram -- the diagram's
-    node/containment data is correct, but export_diagram's headless PNG
-    for it is expected to be blank (both DT_DataPkg and DT_Class are
-    ContainerMappings; see CONTAINER_DIAGRAMS' comment in this module for
-    why that whole Sirius technology doesn't paint headless).
+    Renders correctly headless (see CONTAINER_DIAGRAMS' comment in this
+    module for the root-cause investigation and fix).
     """
     if layer not in LAYER_METHODS:
         raise BridgeError(f"unknown layer {layer!r}, expected one of {sorted(LAYER_METHODS)}")
@@ -1552,13 +1538,18 @@ def create_class_diagram(
                 raise ValueError("container mapping not found: {_CLASS_DIAGRAM_PKG_MAPPING}/{_CLASS_DIAGRAM_CLASS_MAPPING}")
             resolved_diagram_name = {diagram_name!r} or f"{{{_CLASS_DIAGRAM_NAME!r}}} - {{root_pkg.get_label()}}"
 
+            # See create_container_diagram's comment for why
+            # DiagramServices.createContainer() replaces apply_mapping()
+            # here -- both DT_DataPkg and DT_Class are ContainerMappings.
+            diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+
             tree = []
 
             def _walk_apply(el, container_java, parent_id, depth, kind):
                 eid = _element_id(el)
                 tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth, "kind": kind}})
                 mapping = pkgMapping if kind == "DataPkg" else classMapping
-                dnode = apply_mapping(container_java, mapping, el.get_java_object())
+                dnode = diagram_services.createContainer(mapping, el.get_java_object(), container_java, java_diag)
                 if max_depth is not None and depth >= max_depth:
                     return
                 if kind == "DataPkg":
@@ -1668,12 +1659,12 @@ def create_class_diagram(
 # element in multiple diagram elements) -- but since bounds/lookup here are
 # keyed by semantic id (same convention as every other diagram function in
 # this module), only one of the duplicates gets its bounds set in pass 2;
-# the other keeps Sirius' default position. Not fixed: the PNG is already
-# known-blank for this whole ContainerMapping family (same reasoning as
-# CONTAINER_DIAGRAMS' comment), so a bounds cosmetic detail for an
-# unrenderable image isn't worth an instance-unique-key redesign. The
-# underlying model data (which entities involve which capabilities) is
-# correct regardless.
+# the other keeps Sirius' default position. Now that this diagram family
+# renders (see CONTAINER_DIAGRAMS' comment -- DiagramServices.createContainer()
+# fix), a duplicated capability would visibly overlap/misplace in the PNG.
+# Not fixed here: an instance-unique-key redesign is a bigger change than
+# this session's scope, and the underlying model data (which entities
+# involve which capabilities) is correct regardless of the cosmetic overlap.
 #
 # Communication-means edges (COC_CommunicationMeans) and capability-to-
 # capability relations (COC_OC_Extends/Include/Generalization) are not
@@ -1695,10 +1686,8 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
     OA-layer only (Operational Capabilities Blank is OA-specific, unlike
     create_class_diagram's CDB).
 
-    KNOWN LIMITATION: same as create_container_diagram -- the diagram's
-    node/containment data is correct, but export_diagram's headless PNG
-    for it is expected to be blank (COC_OperationalEntities is a
-    ContainerMapping; see CONTAINER_DIAGRAMS' comment in this module).
+    Renders correctly headless (see CONTAINER_DIAGRAMS' comment in this
+    module for the root-cause investigation and fix).
     """
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)
@@ -1724,12 +1713,18 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
                 raise ValueError("container/node mapping not found: {_CAPABILITY_ENTITY_MAPPING}/{_CAPABILITY_NODE_MAPPING}")
             resolved_diagram_name = {diagram_name!r} or f"{{{_CAPABILITY_DIAGRAM_NAME!r}}} - {{pkg.get_label()}}"
 
+            # See create_container_diagram's comment: COC_OperationalEntities
+            # is a ContainerMapping, so it needs DiagramServices.createContainer()
+            # instead of apply_mapping(). COC_OperationalCapabilities (below)
+            # is a NodeMapping -- those already render fine via apply_mapping().
+            diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+
             tree = []
 
             def _walk_apply(el, container_java, parent_id, depth):
                 eid = _element_id(el)
                 tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth, "kind": "Entity"}})
-                dnode = apply_mapping(container_java, entityMapping, el.get_java_object())
+                dnode = diagram_services.createContainer(entityMapping, el.get_java_object(), container_java, java_diag)
 
                 if hasattr(el, "get_involving_operational_capabilities"):
                     for cap in el.get_involving_operational_capabilities():

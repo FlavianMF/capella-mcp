@@ -99,12 +99,11 @@ class TestDiagrams:
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
 
-    def test_create_container_diagram_data_is_correct(self):
-        """Operational Entity Blank: node/containment DATA must be correct
-        even though the headless PNG export is known-blank (see
-        CONTAINER_DIAGRAMS' comment in bridge.py) -- this intentionally
-        does NOT assert anything about PNG size, only the model data,
-        which is the part this bridge is actually responsible for."""
+    def test_create_container_diagram_renders_non_blank_png(self):
+        """Operational Entity Blank -- regression guard for the
+        DiagramServices.createContainer() fix (see CONTAINER_DIAGRAMS'
+        comment in bridge.py). Used to always export blank; now must
+        render a real PNG same as any other diagram type."""
         created = bridge.create_container_diagram("car_hmi/car_hmi.aird", "oa", "OperationalEntity")
         try:
             assert created["node_count"] > 0
@@ -112,6 +111,11 @@ class TestDiagrams:
             fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
             assert fetched["uid"] == created["diagram_uid"]
             assert fetched["type"] == "Operational Entity Blank"
+
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
 
@@ -119,11 +123,12 @@ class TestDiagrams:
         with pytest.raises(bridge.BridgeError, match="no container/blank diagram known"):
             bridge.create_container_diagram("car_hmi/car_hmi.aird", "la", "LogicalComponent")
 
-    def test_oaib_data_is_correct(self):
+    def test_oaib_renders_non_blank_png(self):
         """OAIB is CONTAINER_DIAGRAMS' only entry with an edge_mapping --
         this also regression-guards the create_representation target fix
         (roots[0] instead of the package, which OAIB's repDef rejects
-        silently -- see the comment in bridge.py's create_container_diagram)."""
+        silently -- see the comment in bridge.py's create_container_diagram)
+        and the DiagramServices.createContainer() render fix."""
         created = bridge.create_container_diagram("car_hmi/car_hmi.aird", "oa", "OperationalActivity")
         try:
             assert created["node_count"] > 0
@@ -131,14 +136,18 @@ class TestDiagrams:
             fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
             assert fetched["uid"] == created["diagram_uid"]
             assert fetched["type"] == "Operational Activity Interaction Blank"
+
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
 
-    def test_create_class_diagram_data_is_correct(self):
+    def test_create_class_diagram_renders_non_blank_png(self):
         """CDB, rooted at the OA layer's default DataPkg. Same
-        data-correct-but-blank-PNG caveat as create_container_diagram
-        (both DT_DataPkg/DT_Class are ContainerMappings) -- only the model
-        data is asserted here."""
+        DiagramServices.createContainer() fix as create_container_diagram
+        (both DT_DataPkg/DT_Class are ContainerMappings)."""
         created = bridge.create_class_diagram("car_hmi/car_hmi.aird", "oa")
         try:
             assert created["node_count"] >= 1
@@ -146,6 +155,13 @@ class TestDiagrams:
             fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
             assert fetched["uid"] == created["diagram_uid"]
             assert fetched["type"] == "Class Diagram Blank"
+
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            # CDB's single-empty-package case is a small but real render
+            # (icon + border + label), well above the ~125-byte blank size.
+            assert Path(match[0]).stat().st_size > 300
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
 
@@ -153,10 +169,11 @@ class TestDiagrams:
         with pytest.raises(bridge.BridgeError, match="unknown layer"):
             bridge.create_class_diagram("car_hmi/car_hmi.aird", "not-a-layer")
 
-    def test_create_capability_diagram_data_is_correct(self):
+    def test_create_capability_diagram_renders_non_blank_png(self):
         """OCB, rooted at OperationalCapabilityPkg -- the one diagram
         function in this module whose target isn't the entity/EntityPkg
-        every other one uses (regression guard for that)."""
+        every other one uses (regression guard for that), plus the same
+        DiagramServices.createContainer() render fix as the others."""
         created = bridge.create_capability_diagram("car_hmi/car_hmi.aird")
         try:
             assert created["node_count"] > 0
@@ -164,6 +181,11 @@ class TestDiagrams:
             fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
             assert fetched["uid"] == created["diagram_uid"]
             assert fetched["type"] == "Operational Capabilities Blank"
+
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
 

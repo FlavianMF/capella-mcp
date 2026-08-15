@@ -123,14 +123,11 @@ def register(mcp: MCPServer) -> None:
         Blank diagram shows a package's entire structure, not one element's
         subtree).
 
-        KNOWN LIMITATION: the diagram's node/containment data is fully
-        correct (get_diagram/list_elements see it fine), but
-        export_diagram's headless PNG for it will be blank -- a confirmed
-        headless Sirius/GMF rendering gap for this whole diagram family
-        (tested live against multiple unrelated domains, not specific to
-        Entity), not a bug in this server. The diagram is still real,
-        valid Capella model content and would plausibly render normally if
-        the model is later opened in the interactive Capella desktop.
+        Renders correctly in export_diagram's headless PNG (see
+        CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause
+        investigation of the blank-render bug this used to have, and the
+        fix -- DiagramServices.createContainer() instead of
+        python4capella's apply_mapping()).
         """
         return bridge.create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)
 
@@ -150,11 +147,9 @@ def register(mcp: MCPServer) -> None:
         "DataPkg" (parent_id = an existing DataPkg) and "Class" (parent_id =
         an existing DataPkg).
 
-        KNOWN LIMITATION: same as create_container_diagram -- the diagram's
-        node/containment data is correct, but export_diagram's headless PNG
-        for it is expected to be blank (both underlying Sirius mappings are
-        ContainerMappings, the technology confirmed not to paint headless;
-        see create_container_diagram's docstring for the full explanation).
+        Renders correctly in export_diagram's headless PNG (see
+        CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause
+        investigation and fix).
         """
         return bridge.create_class_diagram(model_path, layer, diagram_name, max_depth)
 
@@ -170,11 +165,9 @@ def register(mcp: MCPServer) -> None:
         involved by more than one entity appears once per involving entity
         (valid Sirius behavior, not a duplicate bug).
 
-        KNOWN LIMITATION: same as create_container_diagram -- the diagram's
-        node/containment data is correct, but export_diagram's headless PNG
-        for it is expected to be blank (COC_OperationalEntities is a
-        ContainerMapping, the technology confirmed not to paint headless;
-        see create_container_diagram's docstring for the full explanation).
+        Renders correctly in export_diagram's headless PNG (see
+        CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause
+        investigation and fix).
         """
         return bridge.create_capability_diagram(model_path, diagram_name)
 

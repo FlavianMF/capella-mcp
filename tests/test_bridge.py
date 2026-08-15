@@ -359,7 +359,11 @@ class TestCreateContainerDiagram:
         }
         assert len(captured["scripts"]) == 2
         assert "OAB_Entity1" in captured["scripts"][0]
-        assert "apply_mapping" in captured["scripts"][0]
+        # regression guard for the DiagramServices.createContainer() fix
+        # (bridge.py's CONTAINER_DIAGRAMS comment) -- must NOT use
+        # python4capella's apply_mapping() to create the container itself.
+        assert "DiagramServices.getDiagramServices()" in captured["scripts"][0]
+        assert "diagram_services.createContainer" in captured["scripts"][0]
         assert "create_representation" in captured["scripts"][0]
         assert "set_bounds" in captured["scripts"][1]
         # regression guard: nested-container elements must be reachable,
@@ -448,6 +452,9 @@ class TestCreateClassDiagram:
         assert "DT_DataPkg" in captured["scripts"][0]
         assert "DT_Class" in captured["scripts"][0]
         assert "get_data_pkg" in captured["scripts"][0]
+        # both mappings are ContainerMappings -- same createContainer() fix
+        # as create_container_diagram, not python4capella's apply_mapping().
+        assert "diagram_services.createContainer" in captured["scripts"][0]
         assert "set_bounds" in captured["scripts"][1]
 
     def test_unknown_layer_rejected_before_subprocess(self, models_root, workspace_root, monkeypatch):
@@ -508,4 +515,7 @@ class TestCreateCapabilityDiagram:
         assert "COC_OperationalCapabilities" in captured["scripts"][0]
         assert "get_involving_operational_capabilities" in captured["scripts"][0]
         assert "get_operational_capability_pkg" in captured["scripts"][0]
+        # entity container uses the createContainer() fix; capability nodes
+        # stay on apply_mapping() (NodeMapping, never observed broken).
+        assert "diagram_services.createContainer" in captured["scripts"][0]
         assert "set_bounds" in captured["scripts"][1]
