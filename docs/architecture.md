@@ -66,10 +66,18 @@ Tools (ações, leitura + escrita):
 - `create_element(model_path, layer, type, name, parent_id, attributes={})`
 - `update_element(model_path, element_id, attributes)`
 - `create_diagram(model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth)`
-  — diagramas "breakdown" (árvore, Sirius `NodeMapping`)
+  — diagramas "breakdown" (árvore, Sirius `NodeMapping`); inclui OABD (9
+  combos originais) e Mode State Machine (`("la","Region")`, PNG renderiza
+  corretamente headless — confirmado ao vivo, ver `BREAKDOWN_DIAGRAMS`)
 - `create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)`
-  — diagramas "Blank" (Sirius `ContainerMapping`); PNG headless sempre em
-  branco, ver comentário de `CONTAINER_DIAGRAMS` em `bridge.py`
+  — diagramas "Blank" (Sirius `ContainerMapping`): Operational Entity Blank
+  (OAB) e Operational Activity Interaction Blank (OAIB, com edges de
+  functional exchange); PNG headless sempre em branco — limitação
+  confirmada universal do Sirius/GMF headless, não é bug daqui, ver
+  comentário de `CONTAINER_DIAGRAMS` em `bridge.py`
+- `create_class_diagram(model_path, layer, diagram_name, max_depth)`
+  — Class Diagram Blank (CDB), árvore heterogênea DataPkg+Class; mesma
+  limitação de PNG em branco que `create_container_diagram`
 - `delete_diagram(model_path, diagram_uid)`
 - `export_diagram(model_path, image_format="PNG")`
 
