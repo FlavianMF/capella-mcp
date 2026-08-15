@@ -119,6 +119,21 @@ class TestDiagrams:
         with pytest.raises(bridge.BridgeError, match="no container/blank diagram known"):
             bridge.create_container_diagram("car_hmi/car_hmi.aird", "la", "LogicalComponent")
 
+    def test_oaib_data_is_correct(self):
+        """OAIB is CONTAINER_DIAGRAMS' only entry with an edge_mapping --
+        this also regression-guards the create_representation target fix
+        (roots[0] instead of the package, which OAIB's repDef rejects
+        silently -- see the comment in bridge.py's create_container_diagram)."""
+        created = bridge.create_container_diagram("car_hmi/car_hmi.aird", "oa", "OperationalActivity")
+        try:
+            assert created["node_count"] > 0
+
+            fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+            assert fetched["uid"] == created["diagram_uid"]
+            assert fetched["type"] == "Operational Activity Interaction Blank"
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
     def test_create_class_diagram_data_is_correct(self):
         """CDB, rooted at the OA layer's default DataPkg. Same
         data-correct-but-blank-PNG caveat as create_container_diagram

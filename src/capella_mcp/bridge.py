@@ -377,13 +377,26 @@ BREAKDOWN_DIAGRAMS = {
 # model data itself. Only export_diagram's headless PNG preview is
 # affected.
 #
-# create_container_diagram() below implements this technology for
-# ("oa", "OperationalEntity")/("oa", "OperationalActor") -> "Operational
-# Entity Blank" (mapping OAB_Entity1), reusing the exact same
-# pkg_method/owned_root_method/children_method shape as
-# BREAKDOWN_DIAGRAMS's OperationalEntity/OperationalActor entries since the
-# underlying semantic structure (EntityPkg.get_owned_entities(), recursive)
-# is identical -- only the Sirius mapping technology differs.
+# create_container_diagram() below implements this technology for:
+#   - ("oa", "OperationalEntity")/("oa", "OperationalActor") -> "Operational
+#     Entity Blank" (mapping OAB_Entity1), reusing the exact same
+#     pkg_method/owned_root_method/children_method shape as
+#     BREAKDOWN_DIAGRAMS's OperationalEntity/OperationalActor entries since
+#     the underlying semantic structure (EntityPkg.get_owned_entities(),
+#     recursive) is identical -- only the Sirius mapping technology differs.
+#   - ("oa", "OperationalActivity") -> "Operational Activity Interaction
+#     Blank" (container mapping "OAIB Operational Activity", edge mapping
+#     "OAIB Interaction"): same pkg_method/owned_root_method/children_method
+#     as BREAKDOWN_DIAGRAMS's OperationalActivity entry (get_operational_
+#     activity_pkg/get_owned_operational_activities/get_owned_functions),
+#     since OAIB's containers are just activities again -- but this one also
+#     has an edge_mapping, so create_container_diagram optionally collects
+#     cross-activity functional-exchange relations (same logic
+#     create_diagram's include_relations already uses) and wires them as
+#     edges between the activity containers. Not re-tested for PNG paint
+#     separately -- OAIB's own container mapping is literally what the
+#     universal-not-Entity-specific finding above was tested against, so
+#     it's already confirmed blank, same reasoning applies to its edges.
 #
 # Other "Blank" diagram kinds researched but not implemented yet:
 #   - Operational Role Blank (ORB): blocked, not a limitation of this
@@ -392,25 +405,20 @@ BREAKDOWN_DIAGRAMS = {
 #     source tree), so there is no semantic element to target apply_mapping
 #     with in the first place. Would need the underlying addon extended,
 #     out of reach from this bridge.
-#   - Operational Capabilities Blank (OCB), Operational Activity
-#     Interaction Blank (OAIB): semantic content is a cross-relation graph
-#     (capability<->entity involvement, activity interaction flow), not a
-#     simple containment tree like OperationalEntity/OperationalActor --
-#     needs real relation-walking logic beyond what CONTAINER_DIAGRAMS'
-#     tree-shaped config captures, deferred.
-#   - Class Diagram Blank (CDB): DataPkg/Class are both wrapped
-#     (Component.get_data_pkg(), DataPkg.get_owned_classes()/
-#     get_owned_data_pkgs()) and available at every layer including OA, but
-#     it's a heterogeneous two-type tree (DataPkg containers nesting
-#     DataPkgs *and* Classes), not the homogeneous single-type tree
-#     CONTAINER_DIAGRAMS assumes -- deferred.
-#   - Mode State Machine (MSM/"State Machine"): StateMachine/Region/
-#     State/Mode are all wrapped in simplified_api (Component.
-#     get_owned_state_machines() -> StateMachine.get_owned_regions() ->
-#     Region.get_owned_states()), but needs new create_element container-
-#     resolution branches (none of these types are in create_element's
-#     validated-branch list today) before a diagram could populate them --
-#     deferred.
+#   - Operational Capabilities Blank (OCB): semantic content places
+#     capabilities (nodeMapping COC_OperationalCapabilities) INSIDE the
+#     entity container(s) they're involved with (OperationalActor.
+#     get_involving_operational_capabilities(), confirmed to exist) rather
+#     than following one single children_method recursively like every
+#     other entry here -- a capability can be involved by more than one
+#     entity, so it isn't even tree-shaped (would need to decide whether to
+#     duplicate the node per involving entity). Deferred, not attempted.
+#
+# Class Diagram Blank (CDB) and Mode State Machine (MSM/"State Machine")
+# are implemented too, but as their own dedicated functions
+# (create_class_diagram, and a BREAKDOWN_DIAGRAMS entry respectively) since
+# neither fits this dict's single-container-mapping tree shape -- see their
+# own comments/docstrings.
 CONTAINER_DIAGRAMS = {
     ("oa", "OperationalEntity"): {
         "diagram": "Operational Entity Blank",
@@ -425,6 +433,14 @@ CONTAINER_DIAGRAMS = {
         "pkg_method": "get_entity_pkg",
         "owned_root_method": "get_owned_entities",
         "children_method": "get_owned_entities",
+    },
+    ("oa", "OperationalActivity"): {
+        "diagram": "Operational Activity Interaction Blank",
+        "container_mapping": "OAIB Operational Activity",
+        "edge_mapping": "OAIB Interaction",
+        "pkg_method": "get_operational_activity_pkg",
+        "owned_root_method": "get_owned_operational_activities",
+        "children_method": "get_owned_functions",
     },
 }
 
@@ -1305,12 +1321,22 @@ def create_container_diagram(
                 raise ValueError(f"container mapping not found: {{cfg['container_mapping']}}")
             resolved_diagram_name = {diagram_name!r} or f"{{{type_name!r}}} Blank - {{pkg.get_label()}}"
 
+            edgeMapping = None
+            if cfg.get("edge_mapping"):
+                edgeMapping = get_representation_mapping_by_name(repDef, cfg["edge_mapping"])
+                if edgeMapping is None:
+                    raise ValueError(f"edge mapping not found: {{cfg['edge_mapping']}}")
+
             tree = []
+            elements_by_id = {{}}
+            dnodes_by_id = {{}}
 
             def _walk_apply(el, container_java, parent_id, depth):
                 eid = _element_id(el)
                 tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth}})
+                elements_by_id[eid] = el
                 dnode = apply_mapping(container_java, containerMapping, el.get_java_object())
+                dnodes_by_id[eid] = dnode
                 if max_depth is not None and depth >= max_depth:
                     return
                 children_method = cfg["children_method"]
@@ -1318,11 +1344,54 @@ def create_container_diagram(
                     for child in getattr(el, children_method)():
                         _walk_apply(child, dnode, eid, depth + 1)
 
+            relations = []
+            if edgeMapping is not None:
+                # Same cross-node functional-exchange collection as
+                # create_diagram's include_relations, restricted to pairs
+                # where both ends are actually placed in this diagram.
+                seen = set()
+                for eid, el in elements_by_id.items():
+                    if not hasattr(el, "get_owned_functional_exchanges"):
+                        continue
+                    for exch in el.get_owned_functional_exchanges():
+                        try:
+                            src = exch.get_source_function()
+                            tgt = exch.get_target_function()
+                        except Exception:
+                            continue
+                        if src is None or tgt is None:
+                            continue
+                        src_id = _element_id(src)
+                        tgt_id = _element_id(tgt)
+                        pair = (src_id, tgt_id)
+                        if src_id in elements_by_id and tgt_id in elements_by_id and pair not in seen:
+                            seen.add(pair)
+                            relations.append({{"source_id": src_id, "target_id": tgt_id, "label": exch.get_label() or ""}})
+
             model.start_transaction()
             try:
-                java_diag = create_representation(model.session, pkg, repDef, resolved_diagram_name)
+                # The representation's target must be an element compatible
+                # with this diagram kind's domainClass -- the owning
+                # package isn't always accepted (createRepresentation
+                # returns None silently rather than raising when it isn't,
+                # confirmed live for OAIB), so an actual root element of
+                # this diagram's own type is the safer, more broadly
+                # compatible anchor. The diagram's *displayed* content is
+                # still the whole forest below, added via apply_mapping
+                # regardless of which single element was the target.
+                java_diag = create_representation(model.session, roots[0], repDef, resolved_diagram_name)
+                if java_diag is None:
+                    raise ValueError(
+                        f"createRepresentation returned None for {{cfg['diagram']}} "
+                        "(target element incompatible with this representation's domainClass)"
+                    )
                 for root in roots:
                     _walk_apply(root, java_diag, None, 0)
+                for rel in relations:
+                    tgt_el = elements_by_id[rel["target_id"]]
+                    dedge = apply_mapping(java_diag, edgeMapping, tgt_el.get_java_object())
+                    dedge.setSourceNode(dnodes_by_id[rel["source_id"]])
+                    dedge.setTargetNode(dnodes_by_id[rel["target_id"]])
                 model.commit_transaction()
             except Exception:
                 model.rollback_transaction()
@@ -1332,6 +1401,7 @@ def create_container_diagram(
             _write_result({{
                 "type_name": {type_name!r},
                 "tree": tree,
+                "relations": relations,
                 "diagram_name": resolved_diagram_name,
             }})
         except Exception as exc:
@@ -1391,10 +1461,12 @@ def create_container_diagram(
                 raise
             model.save()
 
+            edge_count = sum(1 for de in java_diag.getOwnedDiagramElements() if de.eClass().getName() == "DEdge")
             _write_result({{
                 "diagram_uid": target.get_uid(),
                 "diagram_name": target.get_name(),
                 "node_count": len(by_target_id),
+                "edge_count": edge_count,
             }})
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
@@ -1405,6 +1477,7 @@ def create_container_diagram(
         "diagram_name": pass2["diagram_name"],
         "type_name": pass1["type_name"],
         "node_count": pass2["node_count"],
+        "edge_count": pass2["edge_count"],
     }
 
 

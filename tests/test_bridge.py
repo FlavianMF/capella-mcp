@@ -345,6 +345,7 @@ class TestCreateContainerDiagram:
             "diagram_uid": "uid-1",
             "diagram_name": "Test Blank",
             "node_count": 3,
+            "edge_count": 0,
         }
         captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
         result = bridge.create_container_diagram("demo.aird", "oa", "OperationalEntity")
@@ -354,6 +355,7 @@ class TestCreateContainerDiagram:
             "diagram_name": "Test Blank",
             "type_name": "OperationalEntity",
             "node_count": 3,
+            "edge_count": 0,
         }
         assert len(captured["scripts"]) == 2
         assert "OAB_Entity1" in captured["scripts"][0]
@@ -363,6 +365,34 @@ class TestCreateContainerDiagram:
         # regression guard: nested-container elements must be reachable,
         # not just top-level ones (see the _collect() helper in bridge.py).
         assert "getOwnedDiagramElements" in captured["scripts"][1]
+
+    def test_oaib_includes_edge_mapping_and_relations(self, models_root, workspace_root, monkeypatch):
+        """("oa", "OperationalActivity") is the one entry with an
+        edge_mapping -- generated script must collect functional-exchange
+        relations and reference OAIB Interaction, unlike the OAB case
+        above which has no edges at all."""
+        pass1_result = {
+            "type_name": "OperationalActivity",
+            "tree": [
+                {"id": "root-a", "label": "Root A", "parent_id": None, "depth": 0},
+                {"id": "child-a", "label": "Child A", "parent_id": "root-a", "depth": 1},
+            ],
+            "relations": [{"source_id": "root-a", "target_id": "child-a", "label": "exchange"}],
+            "diagram_name": "OAIB Test",
+        }
+        pass2_result = {
+            "diagram_uid": "uid-2",
+            "diagram_name": "OAIB Test",
+            "node_count": 2,
+            "edge_count": 1,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        result = bridge.create_container_diagram("demo.aird", "oa", "OperationalActivity")
+
+        assert result["edge_count"] == 1
+        assert "OAIB Interaction" in captured["scripts"][0]
+        assert "get_owned_functional_exchanges" in captured["scripts"][0]
+        assert "setSourceNode" in captured["scripts"][0]
 
     def test_unknown_combo_rejected_before_subprocess(self, models_root, workspace_root, monkeypatch):
         def _run(*args, **kwargs):

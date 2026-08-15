@@ -110,12 +110,14 @@ def register(mcp: MCPServer) -> None:
         max_depth: int | None = None,
     ) -> dict:
         """Create a real Capella (Sirius) "Blank" diagram and save the model --
-        the ContainerMapping-based diagram family (currently only
-        "Operational Entity Blank"), distinct from create_diagram's
-        NodeMapping-based "breakdown" trees.
+        the ContainerMapping-based diagram family, distinct from
+        create_diagram's NodeMapping-based "breakdown" trees.
 
         layer must be one of: oa, sa, la, pa, epbs. Supported (layer,
-        type_name) combinations: OperationalEntity/oa, OperationalActor/oa.
+        type_name) combinations: OperationalEntity/oa and OperationalActor/oa
+        ("Operational Entity Blank" -- containment only, no edges) and
+        OperationalActivity/oa ("Operational Activity Interaction Blank" --
+        also adds functional-exchange edges between the placed activities).
         Unlike create_diagram, there is no root_id -- this always covers the
         WHOLE forest of root-level elements of that type in the layer (a
         Blank diagram shows a package's entire structure, not one element's
