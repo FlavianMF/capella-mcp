@@ -119,6 +119,25 @@ class TestDiagrams:
         with pytest.raises(bridge.BridgeError, match="no container/blank diagram known"):
             bridge.create_container_diagram("car_hmi/car_hmi.aird", "la", "LogicalComponent")
 
+    def test_create_class_diagram_data_is_correct(self):
+        """CDB, rooted at the OA layer's default DataPkg. Same
+        data-correct-but-blank-PNG caveat as create_container_diagram
+        (both DT_DataPkg/DT_Class are ContainerMappings) -- only the model
+        data is asserted here."""
+        created = bridge.create_class_diagram("car_hmi/car_hmi.aird", "oa")
+        try:
+            assert created["node_count"] >= 1
+
+            fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+            assert fetched["uid"] == created["diagram_uid"]
+            assert fetched["type"] == "Class Diagram Blank"
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
+    def test_create_class_diagram_unknown_layer_raises(self):
+        with pytest.raises(bridge.BridgeError, match="unknown layer"):
+            bridge.create_class_diagram("car_hmi/car_hmi.aird", "not-a-layer")
+
     def test_mode_state_machine_renders_non_blank_png(self):
         """("la", "Region") is NodeMapping (MSM_ModeState), not the
         ContainerMapping "Blank" family -- confirmed live to render

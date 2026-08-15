@@ -157,6 +157,15 @@ class TestGeneratedScripts:
         bridge.get_diagram("demo.aird", "u1")
         assert "u1" in captured["script"]
 
+    def test_create_element_data_pkg_and_class(self, models_root, workspace_root, monkeypatch):
+        for type_name, expected_call in [
+            ("DataPkg", "get_owned_data_pkgs"),
+            ("Class", "get_owned_classes"),
+        ]:
+            captured = self._capture_and_compile(monkeypatch)
+            bridge.create_element("demo.aird", "la", type_name, "X", parent_id="parent-id")
+            assert expected_call in captured["script"]
+
     def test_create_element_state_machine_chain(self, models_root, workspace_root, monkeypatch):
         """StateMachine/Region/State/Mode all require parent_id and route
         through their own accessor -- one compile check per type is enough
@@ -362,3 +371,59 @@ class TestCreateContainerDiagram:
         monkeypatch.setattr(bridge.subprocess, "run", _run)
         with pytest.raises(bridge.BridgeError, match="no container/blank diagram known"):
             bridge.create_container_diagram("demo.aird", "la", "LogicalComponent")
+
+
+class TestCreateClassDiagram:
+    """create_class_diagram (CDB) is heterogeneous -- DataPkg containers
+    nest both sub-DataPkgs and Classes, two different ContainerMappings --
+    unlike create_container_diagram's single-mapping shape."""
+
+    def _mock_sequence(self, monkeypatch, results):
+        captured = {"scripts": []}
+        results_iter = iter(results)
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["scripts"].append(script)
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        return captured
+
+    def test_two_pass_round_trip(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {
+            "tree": [
+                {"id": "pkg-a", "label": "Data", "parent_id": None, "depth": 0, "kind": "DataPkg"},
+                {"id": "cls-a", "label": "Speed", "parent_id": "pkg-a", "depth": 1, "kind": "Class"},
+            ],
+            "diagram_name": "Class Diagram Blank - Data",
+        }
+        pass2_result = {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Class Diagram Blank - Data",
+            "node_count": 2,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        result = bridge.create_class_diagram("demo.aird", "oa")
+
+        assert result == {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Class Diagram Blank - Data",
+            "node_count": 2,
+        }
+        assert len(captured["scripts"]) == 2
+        assert "DT_DataPkg" in captured["scripts"][0]
+        assert "DT_Class" in captured["scripts"][0]
+        assert "get_data_pkg" in captured["scripts"][0]
+        assert "set_bounds" in captured["scripts"][1]
+
+    def test_unknown_layer_rejected_before_subprocess(self, models_root, workspace_root, monkeypatch):
+        def _run(*args, **kwargs):
+            raise AssertionError("subprocess.run should not be called for an unknown layer")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        with pytest.raises(bridge.BridgeError, match="unknown layer"):
+            bridge.create_class_diagram("demo.aird", "not-a-layer")

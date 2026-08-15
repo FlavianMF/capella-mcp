@@ -721,11 +721,11 @@ def create_element(
                 # get_owned_logical_components() (nesting). LogicalComponent,
                 # SystemFunction, LogicalFunction, OperationalActivity,
                 # OperationalActor, OperationalEntity, OperationalCapability,
-                # StateMachine, Region, State, and Mode have all been
-                # validated against a real model this way. Other layer/type
-                # combinations still need their own container resolved the
-                # same way before create_element will actually persist
-                # anything for them.
+                # StateMachine, Region, State, Mode, DataPkg, and Class have
+                # all been validated against a real model this way. Other
+                # layer/type combinations still need their own container
+                # resolved the same way before create_element will actually
+                # persist anything for them.
                 if {type_name!r} == "LogicalComponent":
                     if hasattr(container, "get_logical_component_pkg"):
                         container = container.get_logical_component_pkg()
@@ -850,6 +850,31 @@ def create_element(
                             f"{{type(container).__name__}} (parent_id must be a Region)"
                         )
                     container.get_owned_states().add(el)
+                elif {type_name!r} == "DataPkg":
+                    # Every layer already has exactly one default DataPkg
+                    # (Component.get_data_pkg(), not a package-of-many like
+                    # e.g. LogicalComponentPkg) -- nesting further always
+                    # requires parent_id pointing at an existing DataPkg.
+                    if {parent_id!r} is None:
+                        raise ValueError(
+                            "DataPkg requires parent_id (an existing DataPkg -- "
+                            "every layer already has a default one)"
+                        )
+                    if not hasattr(container, "get_owned_data_pkgs"):
+                        raise AttributeError(
+                            "no get_owned_data_pkgs() found on "
+                            f"{{type(container).__name__}} (parent_id must be a DataPkg)"
+                        )
+                    container.get_owned_data_pkgs().add(el)
+                elif {type_name!r} == "Class":
+                    if {parent_id!r} is None:
+                        raise ValueError("Class requires parent_id (an existing DataPkg)")
+                    if not hasattr(container, "get_owned_classes"):
+                        raise AttributeError(
+                            "no get_owned_classes() found on "
+                            f"{{type(container).__name__}} (parent_id must be a DataPkg)"
+                        )
+                    container.get_owned_classes().add(el)
                 else:
                     container.get_contents().append(el)
                 model.commit_transaction()
@@ -1379,6 +1404,173 @@ def create_container_diagram(
         "diagram_uid": pass2["diagram_uid"],
         "diagram_name": pass2["diagram_name"],
         "type_name": pass1["type_name"],
+        "node_count": pass2["node_count"],
+    }
+
+
+# Class Diagram Blank (CDB, common.odesign -- not OA-specific, but every
+# layer including "oa" has its own default DataPkg via
+# <Layer>.get_data_pkg()). Distinct from create_container_diagram: CDB's
+# tree is HETEROGENEOUS (DataPkg containers nesting *both* sub-DataPkgs and
+# Class leaves -- two different ContainerMappings, DT_DataPkg/DT_Class, not
+# CONTAINER_DIAGRAMS' single container_mapping shape), so it gets its own
+# function rather than forcing that config table to express two node
+# kinds for just this one case.
+#
+# Same known limitation as CONTAINER_DIAGRAMS (see its comment): both
+# DT_DataPkg and DT_Class are ContainerMappings, so this diagram's headless
+# PNG export is expected to be blank too -- not re-tested live (the
+# universal-not-Entity-specific finding already covers "ContainerMapping
+# doesn't paint headless" broadly enough that re-confirming per mapping
+# name would just re-run the same disproven-territory check). The
+# diagram's data (real nested DataPkg/Class containment) is correct.
+_CLASS_DIAGRAM_NAME = "Class Diagram Blank"
+_CLASS_DIAGRAM_PKG_MAPPING = "DT_DataPkg"
+_CLASS_DIAGRAM_CLASS_MAPPING = "DT_Class"
+
+
+def create_class_diagram(
+    model_path: str,
+    layer: str,
+    diagram_name: str | None = None,
+    max_depth: int | None = None,
+) -> dict:
+    """Create a real Capella (Sirius) "Class Diagram Blank" and save the
+    model, rooted at the layer's own default DataPkg -- recurses through
+    nested DataPkgs and the Classes owned at every level.
+
+    layer must be one of: oa, sa, la, pa, epbs (every layer has a DataPkg).
+
+    KNOWN LIMITATION: same as create_container_diagram -- the diagram's
+    node/containment data is correct, but export_diagram's headless PNG
+    for it is expected to be blank (both DT_DataPkg and DT_Class are
+    ContainerMappings; see CONTAINER_DIAGRAMS' comment in this module for
+    why that whole Sirius technology doesn't paint headless).
+    """
+    if layer not in LAYER_METHODS:
+        raise BridgeError(f"unknown layer {layer!r}, expected one of {sorted(LAYER_METHODS)}")
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    layer_method = LAYER_METHODS[layer]
+
+    # Pass 1: resolve the layer's default DataPkg, create the
+    # representation targeted at it, then walk + apply_mapping the whole
+    # heterogeneous tree (DataPkg -> sub-DataPkgs + Classes) in the same
+    # transaction -- same reasoning as create_container_diagram for why no
+    # reopen is needed until set_bounds.
+    pass1_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            se = model.get_system_engineering()
+            layer_obj = getattr(se, {layer_method!r})()
+            max_depth = {max_depth!r}
+
+            root_pkg = layer_obj.get_data_pkg()
+            if root_pkg is None:
+                raise ValueError("this layer has no DataPkg")
+
+            repDef = get_representation_definition_by_name(model.session, {_CLASS_DIAGRAM_NAME!r})
+            if repDef is None:
+                raise ValueError("representation definition not found: {_CLASS_DIAGRAM_NAME}")
+            pkgMapping = get_representation_mapping_by_name(repDef, {_CLASS_DIAGRAM_PKG_MAPPING!r})
+            classMapping = get_representation_mapping_by_name(repDef, {_CLASS_DIAGRAM_CLASS_MAPPING!r})
+            if pkgMapping is None or classMapping is None:
+                raise ValueError("container mapping not found: {_CLASS_DIAGRAM_PKG_MAPPING}/{_CLASS_DIAGRAM_CLASS_MAPPING}")
+            resolved_diagram_name = {diagram_name!r} or f"{{{_CLASS_DIAGRAM_NAME!r}}} - {{root_pkg.get_label()}}"
+
+            tree = []
+
+            def _walk_apply(el, container_java, parent_id, depth, kind):
+                eid = _element_id(el)
+                tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth, "kind": kind}})
+                mapping = pkgMapping if kind == "DataPkg" else classMapping
+                dnode = apply_mapping(container_java, mapping, el.get_java_object())
+                if max_depth is not None and depth >= max_depth:
+                    return
+                if kind == "DataPkg":
+                    for sub_pkg in el.get_owned_data_pkgs():
+                        _walk_apply(sub_pkg, dnode, eid, depth + 1, "DataPkg")
+                    for cls in el.get_owned_classes():
+                        _walk_apply(cls, dnode, eid, depth + 1, "Class")
+
+            model.start_transaction()
+            try:
+                java_diag = create_representation(model.session, root_pkg, repDef, resolved_diagram_name)
+                _walk_apply(root_pkg, java_diag, None, 0, "DataPkg")
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "tree": tree,
+                "diagram_name": resolved_diagram_name,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass1 = _run_script(pass1_body)
+
+    tree = pass1["tree"]
+    resolved_diagram_name = pass1["diagram_name"]
+    bounds_by_id = _layout_tree(tree)
+
+    # Pass 2 (reopen): set bounds for every node (never auto-synchronized,
+    # same reasoning as create_container_diagram).
+    pass2_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            bounds_by_id = {bounds_by_id!r}
+
+            diagrams = model.get_all_diagrams()
+            target = None
+            for d in diagrams:
+                if d.get_name() == {resolved_diagram_name!r}:
+                    target = d
+                    break
+            if target is None:
+                raise ValueError(f"diagram not found after pass 1: {resolved_diagram_name!r}")
+            java_diag = target.get_java_object().getRepresentation()
+
+            by_target_id = {{}}
+
+            def _collect(de):
+                if de.eClass().getName() != "DEdge":
+                    by_target_id[de.getTarget().getId()] = de
+                    if hasattr(de, "getOwnedDiagramElements"):
+                        for child in de.getOwnedDiagramElements():
+                            _collect(child)
+
+            for de in java_diag.getOwnedDiagramElements():
+                _collect(de)
+
+            model.start_transaction()
+            try:
+                for nid, bounds in bounds_by_id.items():
+                    dnode = by_target_id.get(nid)
+                    if dnode is not None:
+                        set_bounds(dnode, bounds)
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "diagram_uid": target.get_uid(),
+                "diagram_name": target.get_name(),
+                "node_count": len(by_target_id),
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass2 = _run_script(pass2_body)
+    return {
+        "diagram_uid": pass2["diagram_uid"],
+        "diagram_name": pass2["diagram_name"],
         "node_count": pass2["node_count"],
     }
 

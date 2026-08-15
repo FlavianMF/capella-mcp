@@ -56,9 +56,10 @@ def register(mcp: MCPServer) -> None:
         OperationalActivity, OperationalActor, OperationalEntity,
         OperationalCapability, StateMachine (parent_id = a Component),
         Region (parent_id = a StateMachine), State/Mode (parent_id = a
-        Region). Any other type_name silently fails to persist -- the call
-        returns success with a valid id, but the element never actually
-        appears in the model on a later call.
+        Region), DataPkg/Class (parent_id = an existing DataPkg -- every
+        layer already has a default one). Any other type_name silently
+        fails to persist -- the call returns success with a valid id, but
+        the element never actually appears in the model on a later call.
         """
         return bridge.create_element(model_path, layer, type_name, name, parent_id, attributes)
 
@@ -130,6 +131,30 @@ def register(mcp: MCPServer) -> None:
         the model is later opened in the interactive Capella desktop.
         """
         return bridge.create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)
+
+    @mcp.tool()
+    def create_class_diagram(
+        model_path: str,
+        layer: str,
+        diagram_name: str | None = None,
+        max_depth: int | None = None,
+    ) -> dict:
+        """Create a real Capella (Sirius) "Class Diagram Blank" and save the
+        model, rooted at the layer's own default DataPkg -- recurses through
+        nested DataPkgs and every Class owned along the way.
+
+        layer must be one of: oa, sa, la, pa, epbs (every layer has a
+        DataPkg). To populate it first, create_element supports type_name
+        "DataPkg" (parent_id = an existing DataPkg) and "Class" (parent_id =
+        an existing DataPkg).
+
+        KNOWN LIMITATION: same as create_container_diagram -- the diagram's
+        node/containment data is correct, but export_diagram's headless PNG
+        for it is expected to be blank (both underlying Sirius mappings are
+        ContainerMappings, the technology confirmed not to paint headless;
+        see create_container_diagram's docstring for the full explanation).
+        """
+        return bridge.create_class_diagram(model_path, layer, diagram_name, max_depth)
 
     @mcp.tool()
     def delete_diagram(model_path: str, diagram_uid: str) -> dict:
