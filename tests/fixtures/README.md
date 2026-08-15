@@ -2,20 +2,21 @@
 
 Os testes de integração (`tests/test_integration.py`) esperam um modelo
 Capella mínimo em `tests/fixtures/demo.aird` (mais os arquivos irmãos que o
-Capella gera junto, ex. `demo.capella`, `demo.afm` etc.).
+Capella gera junto: `demo.capella`, `demo.afm`).
 
-Ainda não existe um fixture aqui — nenhum modelo de teste estava disponível
-no momento do scaffolding deste projeto (ver
-`docs/decisions/0002-headless-por-chamada.md`). Passos para gerar um, assim
-que a imagem Docker (`docker build -t capella-mcp .`) estiver funcionando:
+Esse fixture já existe (gerado via Capella local, GUI, projeto Enterprise
+Architecture com as 5 camadas Arcadia OA/SA/LA/PA/EPBS) e está commitado
+neste diretório. Os testes de integração passam contra ele, local (ver
+`scripts/run_integration_tests_local.sh`) e via Docker (ver
+`scripts/run_integration_tests.sh`).
 
-1. Rodar o Capella dentro do container com um servidor VNC/X forwarding (ou
-   localmente, se instalado) e criar um projeto novo vazio ("Empty Project"
-   ou o template "Enterprise Architecture") pelo assistente do Capella.
-2. As 5 camadas Arcadia (OA/SA/LA/PA/EPBS) precisam existir no modelo — o
-   template padrão do Capella já cria a estrutura.
-3. Copiar os arquivos gerados (`.aird`, `.capella`, `.afm`, ...) para esta
-   pasta, renomeando a base para `demo`.
+Pra usar esse mesmo fixture testando o servidor MCP com um cliente/LLM
+real (não só `pytest`), ver `docs/testing-with-llm.md`.
 
-Até esse fixture existir, `tests/test_integration.py` pula automaticamente
-(skip), sem quebrar o restante da suíte.
+Se precisar regenerar o fixture do zero (ex. corrompeu, ou quer um
+modelo maior/diferente): abrir o Capella (local ou dentro do container
+via VNC/X forwarding), criar um projeto novo ("Empty Project" ou
+"Enterprise Architecture"), garantir que as 5 camadas Arcadia existem
+(o template padrão já cria a estrutura), e copiar os arquivos gerados
+(`.aird`, `.capella`, `.afm`) pra esta pasta, renomeando a base pra
+`demo`.
