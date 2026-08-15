@@ -65,3 +65,14 @@ Tools (ações, leitura + escrita):
 - `get_element(model_path, element_id)`
 - `create_element(model_path, layer, type, name, parent_id, attributes={})`
 - `update_element(model_path, element_id, attributes)`
+- `create_diagram(model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth)`
+  — diagramas "breakdown" (árvore, Sirius `NodeMapping`)
+- `create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)`
+  — diagramas "Blank" (Sirius `ContainerMapping`); PNG headless sempre em
+  branco, ver comentário de `CONTAINER_DIAGRAMS` em `bridge.py`
+- `delete_diagram(model_path, diagram_uid)`
+- `export_diagram(model_path, image_format="PNG")`
+
+Resources adicionais (diagramas):
+- `capella://{model_path}/diagrams`
+- `capella://{model_path}/diagram/{diagram_uid}`

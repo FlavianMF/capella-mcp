@@ -143,3 +143,180 @@ class TestGeneratedScripts:
         captured = self._capture_and_compile(monkeypatch)
         bridge.update_element("demo.aird", "some-id", {"description": "baz"})
         assert "start_transaction" in captured["script"]
+
+    def test_list_diagrams(self, models_root, workspace_root, monkeypatch):
+        captured = self._capture_and_compile(monkeypatch, {"diagrams": []})
+        bridge.list_diagrams("demo.aird")
+        assert "get_all_diagrams" in captured["script"]
+
+    def test_get_diagram(self, models_root, workspace_root, monkeypatch):
+        captured = self._capture_and_compile(
+            monkeypatch,
+            {"uid": "u1", "name": "N", "type": "T", "target_id": "t1", "target_label": "L"},
+        )
+        bridge.get_diagram("demo.aird", "u1")
+        assert "u1" in captured["script"]
+
+    def test_delete_diagram(self, models_root, workspace_root, monkeypatch):
+        captured = self._capture_and_compile(
+            monkeypatch, {"deleted": True, "uid": "u1", "name": "N"}
+        )
+        bridge.delete_diagram("demo.aird", "u1")
+        assert "DialectManager" in captured["script"]
+        assert "deleteRepresentation" in captured["script"]
+        assert "start_transaction" in captured["script"]
+
+
+class TestExportDiagram:
+    def test_export_diagram_recursive_glob_finds_nested_files(
+        self, models_root, workspace_root, monkeypatch
+    ):
+        """Regression test: the real Capella exporter writes into a NESTED
+        subdirectory (<out_dir>/<project>/<model>.aird/*.png), not directly
+        under out_dir -- a non-recursive glob previously always reported
+        files: [] even on a fully successful export."""
+
+        def _run(cmd, capture_output, text, timeout):
+            out_arg = cmd[cmd.index("-outputfolder") + 1]
+            # out_arg is a workspace-relative resource path
+            # ("/models/demo_diagram_exports"); map it back to the real
+            # filesystem location under models_root the same way
+            # _workspace_path_for_model derives it.
+            rel = out_arg.split("/", 2)[-1]
+            out_dir = models_root / rel
+            nested = out_dir / "some_project" / "demo.aird"
+            nested.mkdir(parents=True)
+            (nested / "Some Diagram.png").write_bytes(b"\x89PNG")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        result = bridge.export_diagram("demo.aird")
+        assert len(result["files"]) == 1
+        assert result["files"][0].endswith("Some Diagram.png")
+
+
+class TestCreateDiagramBreakdown:
+    """create_diagram chains 3 headless calls; mock subprocess.run to feed
+    each pass a plausible result in sequence and check every generated
+    script at least compiles."""
+
+    def _mock_sequence(self, monkeypatch, results):
+        captured = {"scripts": []}
+        results_iter = iter(results)
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["scripts"].append(script)
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        return captured
+
+    def test_three_pass_round_trip(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {
+            "type_name": "LogicalComponent",
+            "root_id": "root-id",
+            "tree": [
+                {"id": "root-id", "label": "Root", "parent_id": None, "depth": 0},
+                {"id": "child-id", "label": "Child", "parent_id": "root-id", "depth": 1},
+            ],
+            "relations": [],
+            "diagram_name": "Test Diagram",
+        }
+        pass2_result = {"new_node_ids": ["child-id"]}
+        pass3_result = {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Test Diagram",
+            "node_count": 1,
+            "edge_count": 0,
+        }
+        captured = self._mock_sequence(
+            monkeypatch, [pass1_result, pass2_result, pass3_result]
+        )
+        result = bridge.create_diagram("demo.aird", "la", type_name="LogicalComponent")
+
+        assert result == {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Test Diagram",
+            "type_name": "LogicalComponent",
+            "root_id": "root-id",
+            "node_count": 1,
+            "edge_count": 0,
+        }
+        assert len(captured["scripts"]) == 3
+        assert "get_representation_definition_by_name" in captured["scripts"][0]
+        assert "apply_mapping" in captured["scripts"][1]
+        assert "set_bounds" in captured["scripts"][2]
+
+    def test_unknown_combo_rejected_before_subprocess(self, models_root, workspace_root, monkeypatch):
+        def _run(*args, **kwargs):
+            raise AssertionError("subprocess.run should not be called for an unknown combo")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        with pytest.raises(bridge.BridgeError, match="no breakdown diagram known"):
+            bridge.create_diagram("demo.aird", "la", type_name="NotARealType")
+
+
+class TestCreateContainerDiagram:
+    """create_container_diagram chains 2 headless calls (create+populate,
+    then reopen for set_bounds) -- see CONTAINER_DIAGRAMS' comment in
+    bridge.py for why this is a separate algorithm from create_diagram."""
+
+    def _mock_sequence(self, monkeypatch, results):
+        captured = {"scripts": []}
+        results_iter = iter(results)
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["scripts"].append(script)
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        return captured
+
+    def test_two_pass_round_trip(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {
+            "type_name": "OperationalEntity",
+            "tree": [
+                {"id": "root-a", "label": "Root A", "parent_id": None, "depth": 0},
+                {"id": "root-b", "label": "Root B", "parent_id": None, "depth": 0},
+                {"id": "child-a", "label": "Child A", "parent_id": "root-a", "depth": 1},
+            ],
+            "diagram_name": "Test Blank",
+        }
+        pass2_result = {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Test Blank",
+            "node_count": 3,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        result = bridge.create_container_diagram("demo.aird", "oa", "OperationalEntity")
+
+        assert result == {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Test Blank",
+            "type_name": "OperationalEntity",
+            "node_count": 3,
+        }
+        assert len(captured["scripts"]) == 2
+        assert "OAB_Entity1" in captured["scripts"][0]
+        assert "apply_mapping" in captured["scripts"][0]
+        assert "create_representation" in captured["scripts"][0]
+        assert "set_bounds" in captured["scripts"][1]
+        # regression guard: nested-container elements must be reachable,
+        # not just top-level ones (see the _collect() helper in bridge.py).
+        assert "getOwnedDiagramElements" in captured["scripts"][1]
+
+    def test_unknown_combo_rejected_before_subprocess(self, models_root, workspace_root, monkeypatch):
+        def _run(*args, **kwargs):
+            raise AssertionError("subprocess.run should not be called for an unknown combo")
+
+        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        with pytest.raises(bridge.BridgeError, match="no container/blank diagram known"):
+            bridge.create_container_diagram("demo.aird", "la", "LogicalComponent")

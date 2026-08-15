@@ -88,6 +88,37 @@ def register(mcp: MCPServer) -> None:
         )
 
     @mcp.tool()
+    def create_container_diagram(
+        model_path: str,
+        layer: str,
+        type_name: str,
+        diagram_name: str | None = None,
+        max_depth: int | None = None,
+    ) -> dict:
+        """Create a real Capella (Sirius) "Blank" diagram and save the model --
+        the ContainerMapping-based diagram family (currently only
+        "Operational Entity Blank"), distinct from create_diagram's
+        NodeMapping-based "breakdown" trees.
+
+        layer must be one of: oa, sa, la, pa, epbs. Supported (layer,
+        type_name) combinations: OperationalEntity/oa, OperationalActor/oa.
+        Unlike create_diagram, there is no root_id -- this always covers the
+        WHOLE forest of root-level elements of that type in the layer (a
+        Blank diagram shows a package's entire structure, not one element's
+        subtree).
+
+        KNOWN LIMITATION: the diagram's node/containment data is fully
+        correct (get_diagram/list_elements see it fine), but
+        export_diagram's headless PNG for it will be blank -- a confirmed
+        headless Sirius/GMF rendering gap for this whole diagram family
+        (tested live against multiple unrelated domains, not specific to
+        Entity), not a bug in this server. The diagram is still real,
+        valid Capella model content and would plausibly render normally if
+        the model is later opened in the interactive Capella desktop.
+        """
+        return bridge.create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)
+
+    @mcp.tool()
     def delete_diagram(model_path: str, diagram_uid: str) -> dict:
         """Delete a diagram from a Capella model and save the model.
 

@@ -311,6 +311,98 @@ BREAKDOWN_DIAGRAMS = {
     },
 }
 
+# CONTAINER_DIAGRAMS: the "Blank" family of OA representations (Operational
+# Entity Blank, Operational Capabilities Blank, etc.) use Sirius
+# ContainerMapping instead of NodeMapping -- apply_mapping() in
+# python4capella's simplified_api/diagram.py genuinely special-cases this
+# (produces a DNodeContainer instead of a DNode, and accepts a
+# DNodeContainer as the `container` arg for nesting), so it is real,
+# working support, not a workaround.
+#
+# KNOWN LIMITATION (2026-08-15, confirmed universal -- not an
+# Entity-domain quirk): every ContainerMapping-produced DNodeContainer's
+# GMF Figure fails to paint in headless Capella, exactly like the
+# NodeMapping case documented below for OperationalEntity/OperationalActor
+# breakdown diagrams. This was re-tested live this session against a
+# domain that has NOTHING to do with Entity and is independently proven to
+# render correctly via NodeMapping (OperationalActivity, the same type
+# OAB_OperationalActivity/"Operational Activity Breakdown" renders fine
+# for): created a real "Operational Activity Interaction Blank"
+# representation, applied its ContainerMapping ("OAIB Operational
+# Activity") to a root OperationalActivity, set_bounds correctly (3-pass
+# create+reopen+reopen, same materialization requirement as breakdown
+# diagrams), exported -- PNG came back a bare drop-shadow fragment, same
+# family of blank as the Entity case, not proof of an Entity-specific bug.
+# Conclusion: this is a universal headless Sirius/GMF Figure-materialization
+# gap for ContainerMapping specifically, independent of domain class.
+# NodeMapping-based diagrams are unaffected (all 9 BREAKDOWN_DIAGRAMS
+# entries except the one documented OperationalEntity/OperationalActor
+# case render correctly).
+#
+# This does NOT mean container diagrams aren't worth creating. The
+# diagram's semantic data (real containment/nesting, real Sirius
+# DRepresentation) is correct and complete -- get_diagram/list_elements see
+# it fine, and it would very plausibly render normally if the model were
+# later opened in the real (non-headless, interactive) Capella desktop:
+# the one native "trigger a repaint" call python4capella exposes,
+# Sirius.open_representation(), was live-tested and is a silent no-op
+# specifically because headless RCP has no real workbench/PartService to
+# open an editor into -- implying an actual editor open (which only a real
+# GUI session provides) is what's missing, not something wrong with the
+# model data itself. Only export_diagram's headless PNG preview is
+# affected.
+#
+# create_container_diagram() below implements this technology for
+# ("oa", "OperationalEntity")/("oa", "OperationalActor") -> "Operational
+# Entity Blank" (mapping OAB_Entity1), reusing the exact same
+# pkg_method/owned_root_method/children_method shape as
+# BREAKDOWN_DIAGRAMS's OperationalEntity/OperationalActor entries since the
+# underlying semantic structure (EntityPkg.get_owned_entities(), recursive)
+# is identical -- only the Sirius mapping technology differs.
+#
+# Other "Blank" diagram kinds researched but not implemented yet:
+#   - Operational Role Blank (ORB): blocked, not a limitation of this
+#     module -- python4capella's simplified_api/capella.py has NO wrapper
+#     class for OperationalRole at all (confirmed by grep across the whole
+#     source tree), so there is no semantic element to target apply_mapping
+#     with in the first place. Would need the underlying addon extended,
+#     out of reach from this bridge.
+#   - Operational Capabilities Blank (OCB), Operational Activity
+#     Interaction Blank (OAIB): semantic content is a cross-relation graph
+#     (capability<->entity involvement, activity interaction flow), not a
+#     simple containment tree like OperationalEntity/OperationalActor --
+#     needs real relation-walking logic beyond what CONTAINER_DIAGRAMS'
+#     tree-shaped config captures, deferred.
+#   - Class Diagram Blank (CDB): DataPkg/Class are both wrapped
+#     (Component.get_data_pkg(), DataPkg.get_owned_classes()/
+#     get_owned_data_pkgs()) and available at every layer including OA, but
+#     it's a heterogeneous two-type tree (DataPkg containers nesting
+#     DataPkgs *and* Classes), not the homogeneous single-type tree
+#     CONTAINER_DIAGRAMS assumes -- deferred.
+#   - Mode State Machine (MSM/"State Machine"): StateMachine/Region/
+#     State/Mode are all wrapped in simplified_api (Component.
+#     get_owned_state_machines() -> StateMachine.get_owned_regions() ->
+#     Region.get_owned_states()), but needs new create_element container-
+#     resolution branches (none of these types are in create_element's
+#     validated-branch list today) before a diagram could populate them --
+#     deferred.
+CONTAINER_DIAGRAMS = {
+    ("oa", "OperationalEntity"): {
+        "diagram": "Operational Entity Blank",
+        "container_mapping": "OAB_Entity1",
+        "pkg_method": "get_entity_pkg",
+        "owned_root_method": "get_owned_entities",
+        "children_method": "get_owned_entities",
+    },
+    ("oa", "OperationalActor"): {
+        "diagram": "Operational Entity Blank",
+        "container_mapping": "OAB_Entity1",
+        "pkg_method": "get_entity_pkg",
+        "owned_root_method": "get_owned_entities",
+        "children_method": "get_owned_entities",
+    },
+}
+
 # Sizing/spacing constants for the layered-tree layout computed in
 # _layout_tree -- see docs/second_brain and the upgrade plan for the
 # formulas' rationale (no auto-layout exists anywhere in python4capella,
@@ -1054,6 +1146,181 @@ def create_diagram(
     }
 
 
+def create_container_diagram(
+    model_path: str,
+    layer: str,
+    type_name: str,
+    diagram_name: str | None = None,
+    max_depth: int | None = None,
+) -> dict:
+    """Create a real Capella (Sirius) "Blank" diagram -- the ContainerMapping
+    family (Operational Entity Blank today; see CONTAINER_DIAGRAMS' comment
+    for what else was researched and why it's not implemented yet), as
+    opposed to create_diagram's NodeMapping-based "breakdown" trees.
+
+    Unlike create_diagram, this walks and populates the WHOLE forest of
+    root-level elements of this type (a Blank diagram isn't scoped to one
+    root the way a breakdown diagram is -- it shows the package's entire
+    structure, same as Capella's own "New Diagram > Operational Entity
+    Blank" wizard entry would from the Entities package).
+
+    KNOWN LIMITATION, same as create_diagram's OperationalEntity/
+    OperationalActor breakdown entries and confirmed to generalize to this
+    whole diagram family (see the long comment above CONTAINER_DIAGRAMS):
+    the created diagram's node/containment data is correct, but
+    export_diagram's headless PNG for it will be blank -- a genuine
+    headless Sirius/GMF limitation for ContainerMapping-produced elements,
+    not a bug in this bridge. The diagram is still real, valid Capella
+    model content (get_diagram/list_elements see it fine, and it would
+    plausibly render normally if opened in the real interactive Capella
+    desktop).
+    """
+    if layer not in LAYER_METHODS:
+        raise BridgeError(f"unknown layer {layer!r}, expected one of {sorted(LAYER_METHODS)}")
+    if (layer, type_name) not in CONTAINER_DIAGRAMS:
+        raise BridgeError(
+            f"no container/blank diagram known for (layer={layer!r}, type_name={type_name!r}); "
+            f"known combinations: {sorted(CONTAINER_DIAGRAMS)}"
+        )
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    layer_method = LAYER_METHODS[layer]
+    cfg = CONTAINER_DIAGRAMS[(layer, type_name)]
+
+    # Pass 1: resolve every root-level element of this type (a forest, not
+    # a single root), create the representation targeted at the owning
+    # package, then walk + apply_mapping the whole forest in the SAME
+    # transaction -- create_representation() returns the raw Java
+    # DRepresentation directly (confirmed by reading diagram.py, not
+    # wrapped the way model.get_all_diagrams()' Diagram objects are), so no
+    # reopen is needed just to start adding nodes to it, only for
+    # set_bounds afterwards (GMF notation views still only materialize
+    # after save()+reopen, same as create_diagram).
+    pass1_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            se = model.get_system_engineering()
+            layer_obj = getattr(se, {layer_method!r})()
+            cfg = {cfg!r}
+            max_depth = {max_depth!r}
+
+            pkg = getattr(layer_obj, cfg["pkg_method"])()
+            roots = list(getattr(pkg, cfg["owned_root_method"])())
+            if not roots:
+                raise ValueError("no root-level element of this type found")
+
+            repDef = get_representation_definition_by_name(model.session, cfg["diagram"])
+            if repDef is None:
+                raise ValueError(f"representation definition not found: {{cfg['diagram']}}")
+            containerMapping = get_representation_mapping_by_name(repDef, cfg["container_mapping"])
+            if containerMapping is None:
+                raise ValueError(f"container mapping not found: {{cfg['container_mapping']}}")
+            resolved_diagram_name = {diagram_name!r} or f"{{{type_name!r}}} Blank - {{pkg.get_label()}}"
+
+            tree = []
+
+            def _walk_apply(el, container_java, parent_id, depth):
+                eid = _element_id(el)
+                tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth}})
+                dnode = apply_mapping(container_java, containerMapping, el.get_java_object())
+                if max_depth is not None and depth >= max_depth:
+                    return
+                children_method = cfg["children_method"]
+                if hasattr(el, children_method):
+                    for child in getattr(el, children_method)():
+                        _walk_apply(child, dnode, eid, depth + 1)
+
+            model.start_transaction()
+            try:
+                java_diag = create_representation(model.session, pkg, repDef, resolved_diagram_name)
+                for root in roots:
+                    _walk_apply(root, java_diag, None, 0)
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "type_name": {type_name!r},
+                "tree": tree,
+                "diagram_name": resolved_diagram_name,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass1 = _run_script(pass1_body)
+
+    tree = pass1["tree"]
+    resolved_diagram_name = pass1["diagram_name"]
+    bounds_by_id = _layout_tree(tree)  # already forest-aware (roots = children[None])
+
+    # Pass 2 (reopen): every node was created in pass 1 (this diagram kind
+    # is never auto-synchronized, unlike breakdown diagrams), so its GMF
+    # node only exists now -- set bounds for all of them, fetch stable uid.
+    pass2_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            bounds_by_id = {bounds_by_id!r}
+
+            diagrams = model.get_all_diagrams()
+            target = None
+            for d in diagrams:
+                if d.get_name() == {resolved_diagram_name!r}:
+                    target = d
+                    break
+            if target is None:
+                raise ValueError(f"diagram not found after pass 1: {resolved_diagram_name!r}")
+            java_diag = target.get_java_object().getRepresentation()
+
+            # Nested elements live inside their parent DNodeContainer's own
+            # getOwnedDiagramElements() (same accessor apply_mapping already
+            # uses to nest into a container), NOT in java_diag's top-level
+            # list -- a flat scan here would silently miss/skip bounds for
+            # everything but root-level entities.
+            by_target_id = {{}}
+
+            def _collect(de):
+                if de.eClass().getName() != "DEdge":
+                    by_target_id[de.getTarget().getId()] = de
+                    if hasattr(de, "getOwnedDiagramElements"):
+                        for child in de.getOwnedDiagramElements():
+                            _collect(child)
+
+            for de in java_diag.getOwnedDiagramElements():
+                _collect(de)
+
+            model.start_transaction()
+            try:
+                for nid, bounds in bounds_by_id.items():
+                    dnode = by_target_id.get(nid)
+                    if dnode is not None:
+                        set_bounds(dnode, bounds)
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "diagram_uid": target.get_uid(),
+                "diagram_name": target.get_name(),
+                "node_count": len(by_target_id),
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass2 = _run_script(pass2_body)
+    return {
+        "diagram_uid": pass2["diagram_uid"],
+        "diagram_name": pass2["diagram_name"],
+        "type_name": pass1["type_name"],
+        "node_count": pass2["node_count"],
+    }
+
+
 def list_diagrams(model_path: str) -> dict:
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)
@@ -1187,7 +1454,12 @@ def export_diagram(model_path: str, image_format: str = "PNG") -> dict:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
         raise BridgeError(f"Capella diagram export timed out after {DEFAULT_TIMEOUT}s") from exc
-    exported = sorted(str(p) for p in out_dir.glob(f"*.{image_format.lower()}"))
+    # KNOWN BUG, fixed 2026-08-15: the real exporter writes to a NESTED
+    # subdirectory (<out_dir>/<eclipse_project_name>/<model_filename>.aird/
+    # *.png), not directly under out_dir -- a non-recursive glob() here
+    # always returned files: [] even on a fully successful export. rglob()
+    # walks the whole tree instead.
+    exported = sorted(str(p) for p in out_dir.rglob(f"*.{image_format.lower()}"))
     if proc.returncode != 0 and not exported:
         raise BridgeError(
             f"Capella diagram export failed (exit={proc.returncode}). stderr tail: {proc.stderr[-2000:]}"

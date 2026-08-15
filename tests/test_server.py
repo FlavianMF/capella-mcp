@@ -16,6 +16,7 @@ def test_all_v1_tools_registered():
         "create_element",
         "update_element",
         "create_diagram",
+        "create_container_diagram",
         "delete_diagram",
         "export_diagram",
     }
