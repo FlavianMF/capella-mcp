@@ -24,3 +24,11 @@ def register(mcp: MCPServer) -> None:
     @mcp.resource("capella://{+model_path}/element/{element_id}")
     def element(model_path: str, element_id: str) -> dict:
         return bridge.get_element(model_path, element_id)
+
+    @mcp.resource("capella://{+model_path}/diagrams")
+    def diagrams(model_path: str) -> dict:
+        return bridge.list_diagrams(model_path)
+
+    @mcp.resource("capella://{+model_path}/diagram/{diagram_uid}")
+    def diagram(model_path: str, diagram_uid: str) -> dict:
+        return bridge.get_diagram(model_path, diagram_uid)
