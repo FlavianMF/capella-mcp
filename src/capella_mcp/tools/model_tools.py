@@ -57,3 +57,48 @@ def register(mcp: MCPServer) -> None:
     def update_element(model_path: str, element_id: str, attributes: dict[str, Any]) -> dict:
         """Update attributes of an existing element in a Capella model and save the model."""
         return bridge.update_element(model_path, element_id, attributes)
+
+    @mcp.tool()
+    def create_diagram(
+        model_path: str,
+        layer: str,
+        type_name: str | None = None,
+        root_id: str | None = None,
+        include_relations: bool = True,
+        diagram_name: str | None = None,
+        max_depth: int | None = None,
+    ) -> dict:
+        """Create a real Capella (Sirius) breakdown diagram for one element's
+        subtree and save the model -- fully automatic, including layout
+        (python4capella has no auto-arrange, so bounds are computed and
+        written explicitly).
+
+        layer must be one of: oa, sa, la, pa, epbs. Supported (layer,
+        type_name) combinations: OperationalActivity/oa, OperationalEntity/oa,
+        OperationalActor/oa, SystemFunction/sa, LogicalFunction/la,
+        LogicalComponent/la, PhysicalFunction/pa, PhysicalComponent/pa,
+        ConfigurationItem/epbs. Either pass root_id
+        (the diagram covers that element's subtree, type_name inferred) or
+        type_name with no root_id (only valid if exactly one root-level
+        element of that type exists in the layer). include_relations also
+        adds functional-exchange edges found among the placed elements.
+        """
+        return bridge.create_diagram(
+            model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth
+        )
+
+    @mcp.tool()
+    def delete_diagram(model_path: str, diagram_uid: str) -> dict:
+        """Delete a diagram from a Capella model and save the model.
+
+        diagram_uid is the value returned as "diagram_uid" by create_diagram
+        or "uid" by the capella://{model_path}/diagrams resource.
+        """
+        return bridge.delete_diagram(model_path, diagram_uid)
+
+    @mcp.tool()
+    def export_diagram(model_path: str, image_format: str = "PNG") -> dict:
+        """Export every diagram in the model to image files (via Capella's
+        native headless export, not an addon), saved next to the model in a
+        `<model>_diagram_exports/` folder."""
+        return bridge.export_diagram(model_path, image_format)

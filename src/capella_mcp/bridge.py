@@ -124,6 +124,212 @@ LAYER_METHODS = {
     "epbs": "get_e_p_b_s_architecture",
 }
 
+# (layer, type_name) -> real Sirius representation/mapping names, extracted
+# from the .odesign files shipped inside Capella's own
+# org.polarsys.capella.core.sirius.analysis plugin jar (see
+# docs/second_brain for the extraction method). "Breakdown" diagrams are
+# flat NodeMapping trees (never nested containers) with a regular
+# <Prefix>_<Type> / <Prefix>_<Type>_sub{Functions,Components} naming
+# convention across all 5 layers -- confirmed by reading the raw odesign
+# XML, not guessed. pkg_method/owned_root_method resolve root-level
+# elements (mirrors LAYER_METHODS' own style); children_method walks one
+# level of containment (Function subtypes share get_owned_functions;
+# component/configuration-item subtypes each have their own).
+BREAKDOWN_DIAGRAMS = {
+    ("oa", "OperationalActivity"): {
+        "diagram": "Operational Activity Breakdown",
+        "node_mapping": "OAB_OperationalActivity",
+        "edge_mapping": "OAB_OperationalActivity_subFunctions",
+        "pkg_method": "get_operational_activity_pkg",
+        "owned_root_method": "get_owned_operational_activities",
+        "children_method": "get_owned_functions",
+    },
+    ("oa", "OperationalEntity"): {
+        # Unlike every sibling entry, the edge mapping name has an
+        # embedded space and no OEB_ prefix -- confirmed against the real
+        # oa.odesign (org.polarsys.capella.core.sirius.analysis jar), not
+        # guessed; get_representation_mapping_by_name matches by exact
+        # string so the space is fine, just not the usual naming pattern.
+        #
+        # KNOWN LIMITATION (2026-08-14, not fixed -- upstream headless
+        # Sirius gap, not a bug in this module): create_diagram produces
+        # correct node/edge data for this type (verified via get_diagram/
+        # list_elements), but export_diagram's PNG is always blank for it.
+        # Root cause narrowed empirically, not just theorized:
+        #   - OEB_OperationalEntities is the only NodeMapping among all 9
+        #     BREAKDOWN_DIAGRAMS entries with a non-recursive
+        #     semanticCandidatesExpression ("service:getOEBScopeBreakdown()"
+        #     vs e.g. LCB_LogicalComponent's
+        #     "service:self.getCBComponentSemanticCandidates()") and a
+        #     generic domainClass="Component" instead of a concrete class
+        #     name -- both unique to this mapping across the 9.
+        #   - Its raw notation XML is missing the GMF "compartment" child
+        #     node (type="3003") that every other mapping's DNode gets --
+        #     present even on other mappings that share its
+        #     `conditionnalStyles predicateExpression="aql:self = container"`
+        #     block (LCB_LogicalComponent, PCB_PhysicalComponent,
+        #     CIBD_ConfigurationItem all have it too and render fine, PNG
+        #     confirmed non-blank -- so that predicate alone isn't the
+        #     cause).
+        #   - Tested and disproven live against tests/fixtures/car_hmi:
+        #     (a) manually apply_mapping-ing the root itself as an extra
+        #     node -- still type="2001"+"5002" only, no "3003", so it is
+        #     not about the root being excluded; (b) hide()+reveal() to
+        #     force GMF view recreation -- same result; (c) inherited from
+        #     an earlier session, DialectManager.INSTANCE.refresh() --
+        #     byte-identical output. The exported PNG for the sole
+        #     remaining node has correct bounds but paints nothing at all,
+        #     not even the shape's border -- consistent with the
+        #     DDiagramElement's style failing to resolve during headless
+        #     view creation specifically for this mapping, not a layout or
+        #     visibility issue we control from this script layer.
+        #   - Fixing this would need attaching a debugger to the headless
+        #     JVM to see the actual exception during GMF view-provider
+        #     dispatch -- out of scope here; documented so create_diagram
+        #     isn't silently "wrong" for OperationalEntity/OperationalActor,
+        #     and so nobody re-discovers this from scratch. Only the
+        #     rendered image is affected; the diagram and its data are
+        #     otherwise fully usable (list_diagrams/get_diagram, and the
+        #     model keeps the real containment/edges).
+        "diagram": "Operational Entity Breakdown",
+        "node_mapping": "OEB_OperationalEntities",
+        "edge_mapping": "containedIn Mapping",
+        "pkg_method": "get_entity_pkg",
+        "owned_root_method": "get_owned_entities",
+        "children_method": "get_owned_entities",
+    },
+    ("oa", "OperationalActor"): {
+        # Same diagram/mapping as OperationalEntity above -- both are
+        # Python wrapper classes over the same underlying EMF "Entity"
+        # class (distinguished only by an actor flag), and create_diagram
+        # infers type_name from a root_id via type(root).__name__, which
+        # can resolve to either wrapper depending on which one the found
+        # element actually is.
+        "diagram": "Operational Entity Breakdown",
+        "node_mapping": "OEB_OperationalEntities",
+        "edge_mapping": "containedIn Mapping",
+        "pkg_method": "get_entity_pkg",
+        "owned_root_method": "get_owned_entities",
+        "children_method": "get_owned_entities",
+    },
+    ("sa", "SystemFunction"): {
+        "diagram": "System Function Breakdown",
+        "node_mapping": "SFB_SystemFunction",
+        "edge_mapping": "SFB_SystemFunction_subFunctions",
+        "pkg_method": "get_system_function_pkg",
+        "owned_root_method": "get_owned_system_functions",
+        "children_method": "get_owned_functions",
+    },
+    ("la", "LogicalFunction"): {
+        "diagram": "Logical Function Breakdown",
+        "node_mapping": "LFB_LogicalFunction",
+        "edge_mapping": "LFB_LogicalFunction_subFunctions",
+        "pkg_method": "get_logical_function_pkg",
+        "owned_root_method": "get_owned_logical_functions",
+        "children_method": "get_owned_functions",
+    },
+    ("la", "LogicalComponent"): {
+        "diagram": "Logical Component Breakdown",
+        "node_mapping": "LCB_LogicalComponent",
+        "edge_mapping": "LCB_LogicalComponent_subComponents",
+        "pkg_method": "get_logical_component_pkg",
+        "owned_root_method": "get_owned_logical_components",
+        "children_method": "get_owned_logical_components",
+    },
+    ("pa", "PhysicalFunction"): {
+        "diagram": "Physical Function Breakdown",
+        "node_mapping": "PFB_PhysicalFunction",
+        "edge_mapping": "PFB_PhysicalFunction_subFunctions",
+        "pkg_method": "get_physical_function_pkg",
+        "owned_root_method": "get_owned_physical_functions",
+        "children_method": "get_owned_functions",
+    },
+    ("pa", "PhysicalComponent"): {
+        "diagram": "Physical Component Breakdown",
+        "node_mapping": "PCB_PhysicalComponent",
+        "edge_mapping": "PCB_PhysicalComponent_subComponents",
+        "pkg_method": "get_physical_component_pkg",
+        "owned_root_method": "get_owned_physical_components",
+        "children_method": "get_owned_physical_components",
+    },
+    ("epbs", "ConfigurationItem"): {
+        "diagram": "Configuration Items Breakdown",
+        "node_mapping": "CIBD_ConfigurationItem",
+        "edge_mapping": "CIBD_ConfigurationItem_subComponents",
+        "pkg_method": "get_configuration_item_pkg",
+        "owned_root_method": "get_owned_configuration_items",
+        "children_method": "get_owned_configuration_items",
+    },
+}
+
+# Sizing/spacing constants for the layered-tree layout computed in
+# _layout_tree -- see docs/second_brain and the upgrade plan for the
+# formulas' rationale (no auto-layout exists anywhere in python4capella,
+# this is our own deterministic algorithm).
+_CHAR_WIDTH_PX = 7
+_PADDING_X = 16
+_MIN_WIDTH = 80
+_MAX_WIDTH = 240
+_NODE_HEIGHT = 40
+_HORIZONTAL_GAP = 20
+_VERTICAL_GAP = 60
+
+
+def _node_width(label: str) -> int:
+    return max(_MIN_WIDTH, min(_MAX_WIDTH, len(label) * _CHAR_WIDTH_PX + _PADDING_X))
+
+
+def _layout_tree(tree: list[dict]) -> dict[str, list[int]]:
+    """Deterministic layered-tree layout (bottom-up subtree width, top-down
+    placement). `tree` is a flat list of {"id", "label", "parent_id"}
+    (parent_id=None for roots). Returns {id: [x, y, width, height]}."""
+    children: dict[str | None, list[dict]] = {}
+    by_id = {}
+    for node in tree:
+        by_id[node["id"]] = node
+        children.setdefault(node["parent_id"], []).append(node)
+
+    widths: dict[str, int] = {}
+    subtree_widths: dict[str, int] = {}
+    depths: dict[str, int] = {}
+
+    def compute_subtree_width(node: dict, depth: int) -> int:
+        depths[node["id"]] = depth
+        widths[node["id"]] = _node_width(node["label"])
+        kids = children.get(node["id"], [])
+        if not kids:
+            subtree_widths[node["id"]] = widths[node["id"]]
+        else:
+            kids_total = sum(compute_subtree_width(k, depth + 1) for k in kids)
+            kids_total += _HORIZONTAL_GAP * (len(kids) - 1)
+            subtree_widths[node["id"]] = max(widths[node["id"]], kids_total)
+        return subtree_widths[node["id"]]
+
+    roots = children.get(None, [])
+    for root in roots:
+        compute_subtree_width(root, 0)
+
+    bounds: dict[str, list[int]] = {}
+
+    def place(node: dict, x0: int):
+        node_id = node["id"]
+        w = widths[node_id]
+        sw = subtree_widths[node_id]
+        x = x0 + (sw - w) // 2
+        y = depths[node_id] * (_NODE_HEIGHT + _VERTICAL_GAP)
+        bounds[node_id] = [x, y, w, _NODE_HEIGHT]
+        cursor = x0
+        for kid in children.get(node_id, []):
+            place(kid, cursor)
+            cursor += subtree_widths[kid["id"]] + _HORIZONTAL_GAP
+
+    cursor = 0
+    for root in roots:
+        place(root, cursor)
+        cursor += subtree_widths[root["id"]] + _HORIZONTAL_GAP * 2
+
+    return bounds
+
 
 class BridgeError(Exception):
     """Raised for anything that stops a tool call from producing a result:
@@ -346,11 +552,13 @@ def create_element(
                 # supporting .add()), e.g. a LogicalComponent lives under
                 # LogicalComponentPkg.get_owned_logical_components() (root)
                 # or another LogicalComponent's own
-                # get_owned_logical_components() (nesting) -- only this one
-                # combination has been validated against a real model.
-                # Other layer/type combinations still need their own
-                # container resolved the same way before create_element
-                # will actually persist anything for them.
+                # get_owned_logical_components() (nesting). LogicalComponent,
+                # SystemFunction, LogicalFunction, OperationalActivity,
+                # OperationalActor, OperationalEntity, and
+                # OperationalCapability have all been validated against a
+                # real model this way. Other layer/type combinations still
+                # need their own container resolved the same way before
+                # create_element will actually persist anything for them.
                 if {type_name!r} == "LogicalComponent":
                     if hasattr(container, "get_logical_component_pkg"):
                         container = container.get_logical_component_pkg()
@@ -360,6 +568,85 @@ def create_element(
                             f"on {{type(container).__name__}}"
                         )
                     container.get_owned_logical_components().add(el)
+                elif {type_name!r} == "SystemFunction":
+                    # SystemAnalysis (root) nests via its SystemFunctionPkg
+                    # (get_owned_system_functions); an existing SystemFunction
+                    # parent (parent_id case) nests sub-functions directly via
+                    # its own get_owned_functions -- different accessor, no
+                    # intermediate pkg, mirrored from Function.get_owned_functions()
+                    # in simplified_api/capella.py.
+                    if hasattr(container, "get_system_function_pkg"):
+                        container = container.get_system_function_pkg()
+                        container.get_owned_system_functions().add(el)
+                    elif hasattr(container, "get_owned_functions"):
+                        container.get_owned_functions().add(el)
+                    else:
+                        raise AttributeError(
+                            "no get_system_function_pkg()/get_owned_functions() "
+                            f"container found on {{type(container).__name__}}"
+                        )
+                elif {type_name!r} == "LogicalFunction":
+                    # LogicalArchitecture (root) nests via its
+                    # LogicalFunctionPkg (get_owned_logical_functions); an
+                    # existing LogicalFunction parent (parent_id case) nests
+                    # sub-functions directly via its own get_owned_functions
+                    # -- same shape as SystemFunction, mirrored from
+                    # Function.get_owned_functions() in simplified_api/capella.py.
+                    if hasattr(container, "get_logical_function_pkg"):
+                        container = container.get_logical_function_pkg()
+                        container.get_owned_logical_functions().add(el)
+                    elif hasattr(container, "get_owned_functions"):
+                        container.get_owned_functions().add(el)
+                    else:
+                        raise AttributeError(
+                            "no get_logical_function_pkg()/get_owned_functions() "
+                            f"container found on {{type(container).__name__}}"
+                        )
+                elif {type_name!r} == "OperationalActivity":
+                    # Mirrors SystemFunction/LogicalFunction exactly --
+                    # OperationalActivity extends the same Function base
+                    # class.
+                    if hasattr(container, "get_operational_activity_pkg"):
+                        container = container.get_operational_activity_pkg()
+                        container.get_owned_operational_activities().add(el)
+                    elif hasattr(container, "get_owned_functions"):
+                        container.get_owned_functions().add(el)
+                    else:
+                        raise AttributeError(
+                            "no get_operational_activity_pkg()/get_owned_functions() "
+                            f"container found on {{type(container).__name__}}"
+                        )
+                elif {type_name!r} in ("OperationalActor", "OperationalEntity"):
+                    # Both wrap the same underlying EMF "Entity" class
+                    # (distinguished by an actor flag); EntityPkg exposes
+                    # one shared get_owned_entities(). Nesting is only
+                    # possible under an OperationalEntity parent -- an
+                    # OperationalActor parent has no get_owned_entities()
+                    # of its own (actors can't be broken down, by design).
+                    if hasattr(container, "get_entity_pkg"):
+                        container = container.get_entity_pkg()
+                        container.get_owned_entities().add(el)
+                    elif hasattr(container, "get_owned_entities"):
+                        container.get_owned_entities().add(el)
+                    else:
+                        raise AttributeError(
+                            "no get_entity_pkg()/get_owned_entities() container found "
+                            f"on {{type(container).__name__}} (an OperationalActor "
+                            "parent cannot own sub-entities)"
+                        )
+                elif {type_name!r} == "OperationalCapability":
+                    # Flat only -- OperationalCapability has no
+                    # self-nesting accessor.
+                    if {parent_id!r} is not None:
+                        raise ValueError(
+                            "OperationalCapability has no nesting accessor; omit parent_id"
+                        )
+                    if not hasattr(container, "get_operational_capability_pkg"):
+                        raise AttributeError(
+                            "no get_operational_capability_pkg() found on "
+                            f"{{type(container).__name__}}"
+                        )
+                    container.get_operational_capability_pkg().get_owned_operational_capabilities().add(el)
                 else:
                     container.get_contents().append(el)
                 model.commit_transaction()
@@ -413,3 +700,447 @@ def update_element(model_path: str, element_id: str, attributes: dict) -> dict:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
     return _run_script(body)
+
+
+def _diagram_include() -> str:
+    return "include('workspace://Python4Capella/simplified_api/diagram.py')\n"
+
+
+def create_diagram(
+    model_path: str,
+    layer: str,
+    type_name: str | None = None,
+    root_id: str | None = None,
+    include_relations: bool = True,
+    diagram_name: str | None = None,
+    max_depth: int | None = None,
+) -> dict:
+    """Create a real Capella (Sirius) breakdown diagram, fully automatic
+    (including layout -- python4capella has no auto-arrange, so bounds are
+    computed by _layout_tree and written explicitly).
+
+    Internally chains 3 headless Capella calls (see docs/second_brain and
+    the upgrade plan for why): GMF notation views (needed for set_bounds)
+    only materialize after a save()+reopen, never within the same
+    transaction they were created in.
+    """
+    if layer not in LAYER_METHODS:
+        raise BridgeError(f"unknown layer {layer!r}, expected one of {sorted(LAYER_METHODS)}")
+    if root_id is None and type_name is None:
+        raise BridgeError("create_diagram requires type_name when root_id is not given")
+    if type_name is not None and root_id is None and (layer, type_name) not in BREAKDOWN_DIAGRAMS:
+        raise BridgeError(
+            f"no breakdown diagram known for (layer={layer!r}, type_name={type_name!r}); "
+            f"known combinations: {sorted(BREAKDOWN_DIAGRAMS)}"
+        )
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    layer_method = LAYER_METHODS[layer]
+
+    # Pass 1: resolve root + type_name, walk containment/relations in pure
+    # Python (no layout yet), create the representation, save.
+    pass1_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            se = model.get_system_engineering()
+            layer_obj = getattr(se, {layer_method!r})()
+            breakdown_diagrams = {BREAKDOWN_DIAGRAMS!r}
+            root_id = {root_id!r}
+            type_name = {type_name!r}
+            max_depth = {max_depth!r}
+
+            if root_id:
+                root = None
+                for el in layer_obj.get_all_contents():
+                    if _element_id(el) == root_id:
+                        root = el
+                        break
+                if root is None:
+                    raise ValueError(f"root_id not found in layer: {{root_id}}")
+                type_name = type(root).__name__
+                cfg = breakdown_diagrams.get(({layer!r}, type_name))
+                if cfg is None:
+                    raise ValueError(f"no breakdown diagram known for type {{type_name}} in layer {layer!r}")
+            else:
+                cfg = breakdown_diagrams[({layer!r}, type_name)]
+                pkg = getattr(layer_obj, cfg["pkg_method"])()
+                candidates = list(getattr(pkg, cfg["owned_root_method"])())
+                if len(candidates) == 0:
+                    raise ValueError("no root-level element of this type found; pass root_id")
+                if len(candidates) > 1:
+                    raise ValueError(
+                        f"multiple root-level elements found ({{len(candidates)}}); pass root_id to pick one"
+                    )
+                root = candidates[0]
+
+            root_id_resolved = _element_id(root)
+            nodes_by_id = {{}}
+            tree = []
+
+            def _walk(el, parent_id, depth):
+                eid = _element_id(el)
+                nodes_by_id[eid] = el
+                tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth}})
+                if max_depth is not None and depth >= max_depth:
+                    return
+                children_method = cfg["children_method"]
+                if hasattr(el, children_method):
+                    for child in getattr(el, children_method)():
+                        _walk(child, eid, depth + 1)
+
+            _walk(root, None, 0)
+
+            relations = []
+            if {include_relations!r}:
+                seen = set()
+                for eid, el in nodes_by_id.items():
+                    if not hasattr(el, "get_owned_functional_exchanges"):
+                        continue
+                    for exch in el.get_owned_functional_exchanges():
+                        try:
+                            src = exch.get_source_function()
+                            tgt = exch.get_target_function()
+                        except Exception:
+                            continue
+                        if src is None or tgt is None:
+                            continue
+                        src_id = _element_id(src)
+                        tgt_id = _element_id(tgt)
+                        pair = (src_id, tgt_id)
+                        if src_id in nodes_by_id and tgt_id in nodes_by_id and pair not in seen:
+                            seen.add(pair)
+                            relations.append({{"source_id": src_id, "target_id": tgt_id, "label": exch.get_label() or ""}})
+
+            repDef = get_representation_definition_by_name(model.session, cfg["diagram"])
+            if repDef is None:
+                raise ValueError(f"representation definition not found: {{cfg['diagram']}}")
+            resolved_diagram_name = {diagram_name!r} or f"{{type_name}} Breakdown - {{root.get_label()}}"
+
+            model.start_transaction()
+            try:
+                create_representation(model.session, root, repDef, resolved_diagram_name)
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "type_name": type_name,
+                "root_id": root_id_resolved,
+                "tree": tree,
+                "relations": relations,
+                "diagram_name": resolved_diagram_name,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass1 = _run_script(pass1_body)
+
+    type_name = pass1["type_name"]
+    root_id_resolved = pass1["root_id"]
+    tree = pass1["tree"]
+    relations = pass1["relations"]
+    resolved_diagram_name = pass1["diagram_name"]
+    cfg = BREAKDOWN_DIAGRAMS[(layer, type_name)]
+    bounds_by_id = _layout_tree(tree)
+
+    # Pass 2 (reopen): reconcile nodes (skip anything the diagram already
+    # auto-populated on its own -- Capella breakdown diagrams synchronize
+    # their direct semantic children on save regardless of the
+    # `synchronized` flag; adding it again via apply_mapping duplicates
+    # it), add containment + cross-relation edges, set bounds for whatever
+    # already has a GMF node (i.e. existed before this pass).
+    pass2_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            se = model.get_system_engineering()
+            layer_obj = getattr(se, {layer_method!r})()
+            cfg = {cfg!r}
+            tree = {tree!r}
+            relations = {relations!r}
+            bounds_by_id = {bounds_by_id!r}
+            root_id = {root_id_resolved!r}
+
+            elements_by_id = {{}}
+            for el in layer_obj.get_all_contents():
+                elements_by_id[_element_id(el)] = el
+
+            diagrams = model.get_all_diagrams()
+            target = None
+            for d in diagrams:
+                if d.get_name() == {resolved_diagram_name!r}:
+                    target = d
+                    break
+            if target is None:
+                raise ValueError(f"diagram not found after pass 1: {resolved_diagram_name!r}")
+            java_diag = target.get_java_object().getRepresentation()
+
+            existing_dnodes = {{}}
+            for de in java_diag.getOwnedDiagramElements():
+                if de.eClass().getName() != "DEdge":
+                    existing_dnodes[de.getTarget().getId()] = de
+
+            repDef = get_representation_definition_by_name(model.session, cfg["diagram"])
+            nodeMapping = get_representation_mapping_by_name(repDef, cfg["node_mapping"])
+            edgeMapping = get_representation_mapping_by_name(repDef, cfg["edge_mapping"])
+
+            new_node_ids = []
+            model.start_transaction()
+            try:
+                for node in tree:
+                    nid = node["id"]
+                    if nid == root_id or nid in existing_dnodes:
+                        # root itself is never shown as a node (matches
+                        # Capella's own native breakdown diagrams -- the
+                        # diagram's target is implicit, only its
+                        # descendants get boxes).
+                        continue
+                    el = elements_by_id.get(nid)
+                    if el is None:
+                        continue
+                    dnode = apply_mapping(java_diag, nodeMapping, el.get_java_object())
+                    existing_dnodes[nid] = dnode
+                    new_node_ids.append(nid)
+
+                # Containment edges are intentionally NOT created here --
+                # Capella auto-wires them itself on save whenever both the
+                # parent and child already have a DNode in this diagram
+                # (confirmed empirically: creating a grandchild node
+                # manually was enough to make Capella also add its edge to
+                # the already-auto-populated parent node, in Capella's own
+                # child->parent direction -- doing it ourselves too just
+                # duplicated the edge, backwards).
+
+                for rel in relations:
+                    src_id = rel["source_id"]
+                    tgt_id = rel["target_id"]
+                    if src_id not in existing_dnodes or tgt_id not in existing_dnodes:
+                        continue
+                    tgt_el = elements_by_id.get(tgt_id)
+                    if tgt_el is None:
+                        continue
+                    dedge = apply_mapping(java_diag, edgeMapping, tgt_el.get_java_object())
+                    dedge.setSourceNode(existing_dnodes[src_id])
+                    dedge.setTargetNode(existing_dnodes[tgt_id])
+
+                for nid, dnode in existing_dnodes.items():
+                    if nid in new_node_ids:
+                        continue
+                    bounds = bounds_by_id.get(nid)
+                    if bounds is not None:
+                        set_bounds(dnode, bounds)
+
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+            _write_result({{"new_node_ids": new_node_ids}})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass2 = _run_script(pass2_body)
+    new_node_ids = pass2["new_node_ids"]
+
+    # Pass 3 (reopen): set bounds for nodes created in pass 2 (their GMF
+    # node only exists now, after that pass's save), and fetch the stable
+    # diagram uid.
+    pass3_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            bounds_by_id = {bounds_by_id!r}
+            new_node_ids = {new_node_ids!r}
+
+            diagrams = model.get_all_diagrams()
+            target = None
+            for d in diagrams:
+                if d.get_name() == {resolved_diagram_name!r}:
+                    target = d
+                    break
+            if target is None:
+                raise ValueError(f"diagram not found after pass 2: {resolved_diagram_name!r}")
+            java_diag = target.get_java_object().getRepresentation()
+
+            if new_node_ids:
+                by_target_id = {{}}
+                for de in java_diag.getOwnedDiagramElements():
+                    if de.eClass().getName() != "DEdge":
+                        by_target_id[de.getTarget().getId()] = de
+                model.start_transaction()
+                try:
+                    for nid in new_node_ids:
+                        dnode = by_target_id.get(nid)
+                        bounds = bounds_by_id.get(nid)
+                        if dnode is not None and bounds is not None:
+                            set_bounds(dnode, bounds)
+                    model.commit_transaction()
+                except Exception:
+                    model.rollback_transaction()
+                    raise
+                model.save()
+
+            node_count = sum(1 for de in java_diag.getOwnedDiagramElements() if de.eClass().getName() != "DEdge")
+            edge_count = sum(1 for de in java_diag.getOwnedDiagramElements() if de.eClass().getName() == "DEdge")
+            _write_result({{
+                "diagram_uid": target.get_uid(),
+                "diagram_name": target.get_name(),
+                "node_count": node_count,
+                "edge_count": edge_count,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass3 = _run_script(pass3_body)
+    return {
+        "diagram_uid": pass3["diagram_uid"],
+        "diagram_name": pass3["diagram_name"],
+        "type_name": type_name,
+        "root_id": root_id_resolved,
+        "node_count": pass3["node_count"],
+        "edge_count": pass3["edge_count"],
+    }
+
+
+def list_diagrams(model_path: str) -> dict:
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    body = textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            diagrams = model.get_all_diagrams()
+            _write_result({{
+                "diagrams": [
+                    {{"uid": d.get_uid(), "name": d.get_name(), "type": d.get_type()}}
+                    for d in diagrams
+                ]
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    return _run_script(body)
+
+
+def get_diagram(model_path: str, diagram_uid: str) -> dict:
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    body = textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            target_uid = {diagram_uid!r}
+            found = None
+            for d in model.get_all_diagrams():
+                if d.get_uid() == target_uid:
+                    found = d
+                    break
+            if found is None:
+                _write_result({{"error": f"diagram not found: {{target_uid}}"}})
+            else:
+                target = found.get_target()
+                _write_result({{
+                    "uid": found.get_uid(),
+                    "name": found.get_name(),
+                    "type": found.get_type(),
+                    "target_id": target.get_id() if target is not None else None,
+                    "target_label": found.get_target().get_label() if target is not None else None,
+                }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    return _run_script(body)
+
+
+def delete_diagram(model_path: str, diagram_uid: str) -> dict:
+    """Delete a diagram (DRepresentation + its DRepresentationDescriptor) and
+    save the model. Uses Sirius's own DialectManager.deleteRepresentation --
+    same class python4capella's create_representation (diagram.py) calls for
+    creation, just the inverse operation; not wrapped by simplified_api
+    itself so referenced directly via its fully-qualified Java name, same
+    style diagram.py itself uses for org.eclipse.core.runtime.NullProgressMonitor.
+    """
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            target_uid = {diagram_uid!r}
+            found = None
+            for d in model.get_all_diagrams():
+                if d.get_uid() == target_uid:
+                    found = d
+                    break
+            if found is None:
+                _write_result({{"error": f"diagram not found: {{target_uid}}"}})
+            else:
+                deleted_name = found.get_name()
+                descriptor = found.get_java_object()
+                model.start_transaction()
+                try:
+                    org.eclipse.sirius.business.api.dialect.DialectManager.INSTANCE.deleteRepresentation(descriptor, model.session)
+                    model.commit_transaction()
+                except Exception:
+                    model.rollback_transaction()
+                    raise
+                model.save()
+                _write_result({{"deleted": True, "uid": target_uid, "name": deleted_name}})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    return _run_script(body)
+
+
+def export_diagram(model_path: str, image_format: str = "PNG") -> dict:
+    """Export every diagram in the model to image files via Capella's own
+    native headless app (not python4capella's own export_as_image, which
+    is flagged status: KO/untested in the addon itself). Separate `-appid`
+    from the EASE/python4capella one used by _run_script -- no script or
+    Python4Capella project import needed here.
+
+    The output folder is always a `_diagram_exports` sibling of the model
+    file, inside MODELS_ROOT: `-outputfolder` is resolved by Capella's
+    commandline core as an Eclipse *resource* path (like `-input`), not a
+    raw filesystem path -- it must live inside a registered project, or
+    "Cannot create outputfolder!" fails with a ResourceException.
+    """
+    abs_path = resolve_model_path(model_path)
+    out_dir = abs_path.parent / f"{abs_path.stem}_diagram_exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    models_project = _ensure_models_project()
+    workspace_path = _workspace_path_for_model(abs_path)
+    output_workspace_path = _workspace_path_for_model(out_dir)
+    # Unlike the `workspace:/project/script.py` script-path argument used
+    # by _run_script, -input/-outputfolder take the resource path AS-IS
+    # (leading single slash, "/project/path" -- confirmed against
+    # Capella's own commandline docs), not the EASE workspace:// URL form.
+    input_arg = workspace_path
+    output_arg = output_workspace_path
+
+    call_dir = WORKSPACE_ROOT / uuid.uuid4().hex
+    call_dir.mkdir(parents=True)
+    cmd = [
+        "xvfb-run", "-a", CAPELLA_BIN,
+        "-nosplash", "-consolelog",
+        "-application", "org.polarsys.capella.core.commandline.core",
+        "-appid", "org.polarsys.capella.exportRepresentations",
+        "-data", str(call_dir),
+        "-import", str(models_project),
+        "-input", input_arg,
+        "-outputfolder", output_arg,
+        "-imageFormat", image_format,
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise BridgeError(f"Capella diagram export timed out after {DEFAULT_TIMEOUT}s") from exc
+    exported = sorted(str(p) for p in out_dir.glob(f"*.{image_format.lower()}"))
+    if proc.returncode != 0 and not exported:
+        raise BridgeError(
+            f"Capella diagram export failed (exit={proc.returncode}). stderr tail: {proc.stderr[-2000:]}"
+        )
+    return {"output_dir": str(out_dir), "files": exported}
