@@ -309,6 +309,31 @@ BREAKDOWN_DIAGRAMS = {
         "owned_root_method": "get_owned_configuration_items",
         "children_method": "get_owned_configuration_items",
     },
+    # Mode State Machine (common.odesign, shared across layers -- only "la"
+    # wired here since LogicalComponent is this bridge's most complete
+    # type). Structurally a perfect fit for the same breakdown algorithm
+    # (single root, one-level flat children, NodeMapping) EVEN THOUGH it
+    # isn't from oa.odesign's "Blank"/ContainerMapping family -- confirmed
+    # live (2026-08-15) that MSM_ModeState (a NodeMapping, states are never
+    # nested here since composite/nested states aren't supported by
+    # create_element) paints correctly in headless Sirius, unlike every
+    # ContainerMapping-based diagram (see CONTAINER_DIAGRAMS' comment) --
+    # exported PNG showed a real rendered state box (icon, label, rounded
+    # shape), not a blank fragment.
+    #
+    # No package-level root exists for a Region (it's nested 3 levels deep
+    # inside an arbitrary Component's arbitrary StateMachine) -- root_id is
+    # always required. pkg_method is deliberately a self-documenting
+    # nonexistent attribute name so the AttributeError from a type_name-only
+    # call (skipping root_id) explains why, instead of a generic failure.
+    ("la", "Region"): {
+        "diagram": "Mode State Machine",
+        "node_mapping": "MSM_ModeState",
+        "edge_mapping": "MSM_Transition",
+        "pkg_method": "root_id_required_for_region_no_package_level_discovery",
+        "owned_root_method": "root_id_required_for_region_no_package_level_discovery",
+        "children_method": "get_owned_states",
+    },
 }
 
 # CONTAINER_DIAGRAMS: the "Blank" family of OA representations (Operational
@@ -695,11 +720,12 @@ def create_element(
                 # or another LogicalComponent's own
                 # get_owned_logical_components() (nesting). LogicalComponent,
                 # SystemFunction, LogicalFunction, OperationalActivity,
-                # OperationalActor, OperationalEntity, and
-                # OperationalCapability have all been validated against a
-                # real model this way. Other layer/type combinations still
-                # need their own container resolved the same way before
-                # create_element will actually persist anything for them.
+                # OperationalActor, OperationalEntity, OperationalCapability,
+                # StateMachine, Region, State, and Mode have all been
+                # validated against a real model this way. Other layer/type
+                # combinations still need their own container resolved the
+                # same way before create_element will actually persist
+                # anything for them.
                 if {type_name!r} == "LogicalComponent":
                     if hasattr(container, "get_logical_component_pkg"):
                         container = container.get_logical_component_pkg()
@@ -788,6 +814,42 @@ def create_element(
                             f"{{type(container).__name__}}"
                         )
                     container.get_operational_capability_pkg().get_owned_operational_capabilities().add(el)
+                elif {type_name!r} == "StateMachine":
+                    # Owned by a Component (LogicalComponent/PhysicalComponent/
+                    # etc, get_owned_state_machines() -- confirmed on
+                    # BehavioralComponent, which LogicalComponent extends).
+                    # No package-level root -- always requires parent_id.
+                    if {parent_id!r} is None:
+                        raise ValueError("StateMachine requires parent_id (an existing Component)")
+                    if not hasattr(container, "get_owned_state_machines"):
+                        raise AttributeError(
+                            "no get_owned_state_machines() found on "
+                            f"{{type(container).__name__}} (parent_id must be a Component)"
+                        )
+                    container.get_owned_state_machines().add(el)
+                elif {type_name!r} == "Region":
+                    # Owned by a StateMachine (or a composite State, not
+                    # supported here -- only StateMachine-level regions).
+                    if {parent_id!r} is None:
+                        raise ValueError("Region requires parent_id (an existing StateMachine)")
+                    if not hasattr(container, "get_owned_regions"):
+                        raise AttributeError(
+                            "no get_owned_regions() found on "
+                            f"{{type(container).__name__}} (parent_id must be a StateMachine)"
+                        )
+                    container.get_owned_regions().add(el)
+                elif {type_name!r} in ("State", "Mode"):
+                    # Owned by a Region. Composite states (a State owning
+                    # its own sub-Regions) are not supported here -- only
+                    # flat states directly under a Region.
+                    if {parent_id!r} is None:
+                        raise ValueError(f"{type_name!r} requires parent_id (an existing Region)")
+                    if not hasattr(container, "get_owned_states"):
+                        raise AttributeError(
+                            "no get_owned_states() found on "
+                            f"{{type(container).__name__}} (parent_id must be a Region)"
+                        )
+                    container.get_owned_states().add(el)
                 else:
                     container.get_contents().append(el)
                 model.commit_transaction()

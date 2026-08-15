@@ -50,6 +50,15 @@ def register(mcp: MCPServer) -> None:
         layer must be one of: oa, sa, la, pa, epbs. type_name is a Capella
         metamodel class name (e.g. "LogicalComponent"). If parent_id is
         omitted, the element is added directly under the layer's root.
+
+        Only these type_names have a validated containment path and will
+        actually persist: LogicalComponent, SystemFunction, LogicalFunction,
+        OperationalActivity, OperationalActor, OperationalEntity,
+        OperationalCapability, StateMachine (parent_id = a Component),
+        Region (parent_id = a StateMachine), State/Mode (parent_id = a
+        Region). Any other type_name silently fails to persist -- the call
+        returns success with a valid id, but the element never actually
+        appears in the model on a later call.
         """
         return bridge.create_element(model_path, layer, type_name, name, parent_id, attributes)
 
@@ -77,7 +86,11 @@ def register(mcp: MCPServer) -> None:
         type_name) combinations: OperationalActivity/oa, OperationalEntity/oa,
         OperationalActor/oa, SystemFunction/sa, LogicalFunction/la,
         LogicalComponent/la, PhysicalFunction/pa, PhysicalComponent/pa,
-        ConfigurationItem/epbs. Either pass root_id
+        ConfigurationItem/epbs, Region/la (a "Mode State Machine" diagram of
+        that Region's direct States/Modes -- root_id is required for this
+        one, there's no layer-wide package to auto-resolve a Region from;
+        include_relations does not yet add StateTransition edges for this
+        combination, states-only for now). Either pass root_id
         (the diagram covers that element's subtree, type_name inferred) or
         type_name with no root_id (only valid if exactly one root-level
         element of that type exists in the layer). include_relations also

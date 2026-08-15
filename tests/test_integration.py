@@ -118,3 +118,26 @@ class TestDiagrams:
     def test_create_container_diagram_unknown_combo_raises(self):
         with pytest.raises(bridge.BridgeError, match="no container/blank diagram known"):
             bridge.create_container_diagram("car_hmi/car_hmi.aird", "la", "LogicalComponent")
+
+    def test_mode_state_machine_renders_non_blank_png(self):
+        """("la", "Region") is NodeMapping (MSM_ModeState), not the
+        ContainerMapping "Blank" family -- confirmed live to render
+        correctly, unlike create_container_diagram's entries. Builds the
+        whole Component -> StateMachine -> Region -> 2 States chain via
+        create_element first (elements are left in place afterwards,
+        matching this file's existing convention for demo.aird)."""
+        comp = bridge.create_element("car_hmi/car_hmi.aird", "la", "LogicalComponent", "MSM Test Component")
+        sm = bridge.create_element("car_hmi/car_hmi.aird", "la", "StateMachine", "SM1", parent_id=comp["id"])
+        region = bridge.create_element("car_hmi/car_hmi.aird", "la", "Region", "Region1", parent_id=sm["id"])
+        bridge.create_element("car_hmi/car_hmi.aird", "la", "State", "Idle", parent_id=region["id"])
+        bridge.create_element("car_hmi/car_hmi.aird", "la", "State", "Running", parent_id=region["id"])
+
+        created = bridge.create_diagram("car_hmi/car_hmi.aird", "la", root_id=region["id"])
+        try:
+            assert created["node_count"] == 2
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])

@@ -157,6 +157,20 @@ class TestGeneratedScripts:
         bridge.get_diagram("demo.aird", "u1")
         assert "u1" in captured["script"]
 
+    def test_create_element_state_machine_chain(self, models_root, workspace_root, monkeypatch):
+        """StateMachine/Region/State/Mode all require parent_id and route
+        through their own accessor -- one compile check per type is enough
+        to catch a typo in the accessor name."""
+        for type_name, expected_call in [
+            ("StateMachine", "get_owned_state_machines"),
+            ("Region", "get_owned_regions"),
+            ("State", "get_owned_states"),
+            ("Mode", "get_owned_states"),
+        ]:
+            captured = self._capture_and_compile(monkeypatch)
+            bridge.create_element("demo.aird", "la", type_name, "X", parent_id="parent-id")
+            assert expected_call in captured["script"]
+
     def test_delete_diagram(self, models_root, workspace_root, monkeypatch):
         captured = self._capture_and_compile(
             monkeypatch, {"deleted": True, "uid": "u1", "name": "N"}
@@ -258,6 +272,34 @@ class TestCreateDiagramBreakdown:
         monkeypatch.setattr(bridge.subprocess, "run", _run)
         with pytest.raises(bridge.BridgeError, match="no breakdown diagram known"):
             bridge.create_diagram("demo.aird", "la", type_name="NotARealType")
+
+    def test_region_mode_state_machine_round_trip(self, models_root, workspace_root, monkeypatch):
+        """("la", "Region") reuses the same breakdown algorithm as the other
+        8 combos but is NodeMapping (MSM_ModeState), not the
+        ContainerMapping "Blank" family -- confirmed live to paint
+        correctly headless, unlike CONTAINER_DIAGRAMS' entries."""
+        pass1_result = {
+            "type_name": "Region",
+            "root_id": "region-id",
+            "tree": [
+                {"id": "region-id", "label": "Region1", "parent_id": None, "depth": 0},
+                {"id": "state-id", "label": "Idle", "parent_id": "region-id", "depth": 1},
+            ],
+            "relations": [],
+            "diagram_name": "Region Breakdown - Region1",
+        }
+        pass2_result = {"new_node_ids": ["state-id"]}
+        pass3_result = {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Region Breakdown - Region1",
+            "node_count": 1,
+            "edge_count": 0,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result, pass3_result])
+        result = bridge.create_diagram("demo.aird", "la", root_id="region-id")
+
+        assert result["type_name"] == "Region"
+        assert "MSM_ModeState" in captured["scripts"][1]
 
 
 class TestCreateContainerDiagram:
