@@ -191,6 +191,55 @@ BREAKDOWN_DIAGRAMS = {
         #     rendered image is affected; the diagram and its data are
         #     otherwise fully usable (list_diagrams/get_diagram, and the
         #     model keeps the real containment/edges).
+        #
+        # FOLLOW-UP (2026-08-15): investigated Capella's/python4capella's own
+        # docs + every alternative OA representation for entities/actors, per
+        # docs/second_brain (same note as above) and
+        # /home/flv/.claude/plans/fa-a-uma-investiga-o-mais-quiet-crescent.md.
+        # Three more concrete levers tried live, all still not enough to fix
+        # this without a richer, more invasive change than fits this bridge:
+        #   (d) org.eclipse.sirius.diagram.business.api.refresh.
+        #       CanonicalSynchronizerFactory.INSTANCE.
+        #       createCanonicalSynchronizer(gmfDiagram).synchronize() (the
+        #       real GMF-notation-level sync, reached via
+        #       SiriusGMFHelper.getGmfDiagram(dDiagram) -- distinct from (c)
+        #       above, which only operates at the Sirius/DDiagram level) --
+        #       ran clean, output still byte-identical, no "3003" child.
+        #   (e) the native python4capella call `Sirius.open_representation()`
+        #       (backed by org.eclipse.python4capella.modules.SiriusModule,
+        #       never called anywhere in capella.py/diagram.py or exposed by
+        #       the Diagram wrapper) -- meant to simulate "open the editor",
+        #       which is what normally triggers full GMF materialization
+        #       interactively. Ran clean, returned None, no effect -- headless
+        #       RCP has no real workbench window/PartService for it to open
+        #       an editor into, so it's plausibly a silent no-op here.
+        #   (f) switching this entry to the "Operational Entity Blank"
+        #       representation instead (ContainerMapping "OAB_Entity1",
+        #       domainClass="Entity", covers both entity and actor creation
+        #       tools -- confirmed via oa.odesign) -- structurally the same
+        #       node technology (ContainerMapping/FlatContainerStyleDescription)
+        #       as the 8 working types, and *not* synchronized at all
+        #       (semanticCandidatesExpression="", createElements="false"),
+        #       so no auto-populate/duplicate-node risk either. This one
+        #       genuinely progresses further: the exported PNG's own pixel
+        #       dimensions correctly matched the bounds we set (e.g. 240x140
+        #       for a [100,100,220,120] box, vs OEB's degenerate ~30x60 for
+        #       real content), proving the GMF geometry *is* real this time.
+        #       But the rendered content itself is still not usable --
+        #       zoomed inspection showed only a faint drop-shadow (3 grey
+        #       tones, no fill, no border, no icon, no label text), i.e. the
+        #       container's actual Figure never paints, same *family* of gap
+        #       as the NodeMapping case, just one layer further along. Not
+        #       adopted -- would trade one non-working representation for a
+        #       differently-non-working one, and the user's own explicit call
+        #       was to replace OEBD with this only if it actually worked.
+        # Conclusion after 6 independent disproven fixes across 2 different
+        # Sirius node technologies (NodeMapping and ContainerMapping): this
+        # is a genuine headless Sirius/GMF limitation, not something fixable
+        # from this bridge's abstraction level (fixed EASE script templates
+        # over python4capella's simplified_api) without dropping to raw
+        # Draw2D/GEF figure-refresh internals well beyond what's documented
+        # or exercised anywhere in python4capella itself.
         "diagram": "Operational Entity Breakdown",
         "node_mapping": "OEB_OperationalEntities",
         "edge_mapping": "containedIn Mapping",
