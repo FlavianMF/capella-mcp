@@ -78,6 +78,10 @@ Tools (ações, leitura + escrita):
 - `create_class_diagram(model_path, layer, diagram_name, max_depth)`
   — Class Diagram Blank (CDB), árvore heterogênea DataPkg+Class; mesma
   limitação de PNG em branco que `create_container_diagram`
+- `create_capability_diagram(model_path, diagram_name)`
+  — Operational Capabilities Blank (OCB), só camada OA; entidades como
+  container + capacidades envolvidas aninhadas; mesma limitação de PNG em
+  branco
 - `delete_diagram(model_path, diagram_uid)`
 - `export_diagram(model_path, image_format="PNG")`
 
