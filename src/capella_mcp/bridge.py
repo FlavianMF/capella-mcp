@@ -404,6 +404,61 @@ BREAKDOWN_DIAGRAMS = {
 # so there is no semantic element to target any creation call with in the
 # first place. Would need the underlying addon extended, out of reach from
 # this bridge.
+#
+# Also researched and still blocked (2026-08-16): the sequence/scenario
+# diagrams (Operational Interaction Scenario/"OES", Activity Interaction
+# Scenario/"OAS"), one layer deeper than ORB's blocker. Real progress this
+# round, but a real dead end too:
+#   - Confirmed via Sirius source (org.eclipse.sirius.diagram.sequence.
+#     description): InstanceRoleMapping extends NodeMapping, and
+#     MessageMapping (BasicMessageMapping's supertype) extends EdgeMapping.
+#     So, contrary to the earlier "zero primitive support anywhere"
+#     conclusion, DiagramServices.createNode()/createEdge() (the same fix
+#     used throughout this module) DO accept them directly via Java
+#     polymorphism -- verified live: creating a Scenario (owned by an
+#     OperationalCapability, capella.py's get_owned_scenarios()) with 2
+#     InstanceRoles (representedInstance set via raw EMF --
+#     python4capella has no setter, only the derived get_represented_
+#     instance() query) and calling createNode() with InstanceRoleMaping
+#     AIS succeeded cleanly, node_count=4, no exception.
+#   - export_diagram fails hard for it anyway, confirmed via Capella's
+#     native exportRepresentations app's own log (not silently blank like
+#     ContainerMapping used to be -- the file is never even written):
+#     `java.lang.NullPointerException: Cannot invoke "org.eclipse.sirius.
+#     diagram.sequence.business.internal.elements.ISequenceEvent.
+#     getVerticalRange()" because "from" is null`. This is Sirius's
+#     internal vertical-ordering computation for sequence diagrams
+#     (lifeline creation/message temporal order), a completely different
+#     mechanism from the x/y `notation:Bounds` every other diagram type in
+#     this module uses -- set_bounds() (which IS what's used in the live
+#     test above) does not establish whatever internal ordering state this
+#     computation expects.
+#   - SequenceDiagramServices.refreshOrdering(ddiagram) exists and sounds
+#     like the fix, but its entire body is
+#     `UIUtil.getInstance().refreshActiveDiagram(ddiagram)` -- UI-dependent,
+#     same class of no-op as the already-ruled-out
+#     Sirius.open_representation() (confirmed live: ran without error, did
+#     not change the export outcome).
+#   - SequenceDiagramServices' other ~30 public methods are exclusively
+#     ordering/validation/query helpers (validateOrdering, doReorder,
+#     allowMessageCreation -- a PRECONDITION check, not a creator) -- no
+#     equivalent to DiagramServices.createContainer/createNode/createEdge
+#     exists for this diagram family anywhere searched.
+#   - Separately, even the semantic model side is harder than everything
+#     else in this module: SequenceMessage has no settable source/target
+#     at all in capella.py, only derived getters
+#     (get_sending_instance_role()/get_receiving_instance_role(), backed by
+#     getSendingPart()/getReceivingPart() -- MessageEnd objects positioned
+#     in the scenario's interaction-fragment order, not a simple 2-field
+#     relationship like OCB's involvement edge was).
+# Conclusion: reachable in principle (the mapping-type compatibility is
+# real), but blocked by an internal Sirius computation with no found public
+# entry point to satisfy it headless, on top of a harder semantic-model
+# side than any diagram already implemented here. Not attempted further --
+# next step, if ever revisited, would be the same live-JDWP-debugger
+# approach that found the ContainerMapping fix, aimed at
+# ISequenceEvent.getVerticalRange()'s actual callers, not another attempt
+# from this bridge's abstraction level.
 CONTAINER_DIAGRAMS = {
     ("oa", "OperationalEntity"): {
         "diagram": "Operational Entity Blank",
