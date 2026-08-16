@@ -467,11 +467,16 @@ class TestCreateClassDiagram:
 
 
 class TestCreateCapabilityDiagram:
-    """create_capability_diagram (OCB) walks the same entity forest as
-    create_container_diagram's OperationalEntity entry, but also nests each
-    entity's involving capabilities -- and its createRepresentation target
-    is OperationalCapabilityPkg, not the entity/EntityPkg every other
-    diagram function in this module uses (confirmed live: those all
+    """create_capability_diagram (OCB) creates entities/actors as
+    containers (createContainer, same fix as CONTAINER_DIAGRAMS), every
+    involved Operational Capability as a FREE node -- deduped, not nested
+    in any entity's container, per oa.odesign's real definition (see the
+    long comment above CONTAINER_DIAGRAMS-adjacent constants for the shape
+    correction and why the original nested version was wrong) -- and an
+    involvement edge (createEdge, source=capability, target=entity) for
+    each entity a capability is involved with. Its createRepresentation
+    target is OperationalCapabilityPkg, not the entity/EntityPkg every
+    other diagram function in this module uses (confirmed live: those all
     silently return None here)."""
 
     def _mock_sequence(self, monkeypatch, results):
@@ -493,14 +498,16 @@ class TestCreateCapabilityDiagram:
         pass1_result = {
             "tree": [
                 {"id": "entity-a", "label": "Driver", "parent_id": None, "depth": 0, "kind": "Entity"},
-                {"id": "cap-a", "label": "Show Speed", "parent_id": "entity-a", "depth": 1, "kind": "Capability"},
+                {"id": "entity-b", "label": "Vehicle", "parent_id": None, "depth": 0, "kind": "Entity"},
+                {"id": "cap-a", "label": "Show Speed", "parent_id": None, "depth": 1, "kind": "Capability"},
             ],
             "diagram_name": "Operational Capabilities Blank - Operational Entities",
+            "edge_count": 2,
         }
         pass2_result = {
             "diagram_uid": "uid-1",
             "diagram_name": "Operational Capabilities Blank - Operational Entities",
-            "node_count": 2,
+            "node_count": 3,
         }
         captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
         result = bridge.create_capability_diagram("demo.aird")
@@ -508,14 +515,22 @@ class TestCreateCapabilityDiagram:
         assert result == {
             "diagram_uid": "uid-1",
             "diagram_name": "Operational Capabilities Blank - Operational Entities",
-            "node_count": 2,
+            "node_count": 3,
+            "edge_count": 2,
         }
         assert len(captured["scripts"]) == 2
         assert "COC_OperationalEntities" in captured["scripts"][0]
         assert "COC_OperationalCapabilities" in captured["scripts"][0]
+        assert "COC_EntityOperationalCapabilityInvolvement" in captured["scripts"][0]
         assert "get_involving_operational_capabilities" in captured["scripts"][0]
         assert "get_operational_capability_pkg" in captured["scripts"][0]
-        # entity container uses the createContainer() fix; capability nodes
-        # stay on apply_mapping() (NodeMapping, never observed broken).
+        # all three element kinds go through DiagramServices, not
+        # python4capella's apply_mapping() (see CONTAINER_DIAGRAMS' comment
+        # and this class's docstring for why).
         assert "diagram_services.createContainer" in captured["scripts"][0]
+        assert "diagram_services.createNode" in captured["scripts"][0]
+        assert "diagram_services.createEdge" in captured["scripts"][0]
+        # regression guard: capabilities must be deduped (one createNode
+        # call per unique capability, not one per involving entity).
+        assert "capabilities_by_id" in captured["scripts"][0]
         assert "set_bounds" in captured["scripts"][1]

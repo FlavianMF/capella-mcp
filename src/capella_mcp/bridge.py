@@ -1434,7 +1434,15 @@ def create_container_diagram(
             def _collect(de):
                 if de.eClass().getName() != "DEdge":
                     by_target_id[de.getTarget().getId()] = de
-                    if hasattr(de, "getOwnedDiagramElements"):
+                    # NOTE: hasattr(de, "getOwnedDiagramElements") is NOT a
+                    # safe guard here -- Py4J's dynamic proxy reports it
+                    # True generically for any Java object regardless of
+                    # whether the concrete class actually has the method,
+                    # and only fails when called (confirmed live: DNode,
+                    # e.g. a free-floating capability node, does not have
+                    # this method the way DNodeContainer does, but hasattr
+                    # claimed it did). Check the real EMF class instead.
+                    if de.eClass().getName() == "DNodeContainer":
                         for child in de.getOwnedDiagramElements():
                             _collect(child)
 
@@ -1604,7 +1612,15 @@ def create_class_diagram(
             def _collect(de):
                 if de.eClass().getName() != "DEdge":
                     by_target_id[de.getTarget().getId()] = de
-                    if hasattr(de, "getOwnedDiagramElements"):
+                    # NOTE: hasattr(de, "getOwnedDiagramElements") is NOT a
+                    # safe guard here -- Py4J's dynamic proxy reports it
+                    # True generically for any Java object regardless of
+                    # whether the concrete class actually has the method,
+                    # and only fails when called (confirmed live: DNode,
+                    # e.g. a free-floating capability node, does not have
+                    # this method the way DNodeContainer does, but hasattr
+                    # claimed it did). Check the real EMF class instead.
+                    if de.eClass().getName() == "DNodeContainer":
                         for child in de.getOwnedDiagramElements():
                             _collect(child)
 
@@ -1646,25 +1662,42 @@ def create_class_diagram(
 # entry already owns as a dict key -- OAB and OCB are two DIFFERENT
 # representations over the SAME semantic types, which CONTAINER_DIAGRAMS'
 # (layer, type_name) keying can't express; (2) OCB isn't a homogeneous
-# containment tree -- a capability isn't a CHILD of the entity that "owns"
-# it, it's placed inside every entity it's INVOLVED with
-# (OperationalActor.get_involving_operational_capabilities(), confirmed to
-# exist and inherited by OperationalEntity), which can be more than one --
-# so this walks the same entity-forest shape as OAB, but at every entity
-# node ALSO attaches its involving capabilities as flat
-# COC_OperationalCapabilities nodes nested in that entity's container.
+# containment tree at all -- see the shape correction below.
 #
-# KNOWN SIMPLIFICATION: a capability involved by more than one entity gets
-# a separate DNode under each (real, valid Sirius behavior, same semantic
-# element in multiple diagram elements) -- but since bounds/lookup here are
-# keyed by semantic id (same convention as every other diagram function in
-# this module), only one of the duplicates gets its bounds set in pass 2;
-# the other keeps Sirius' default position. Now that this diagram family
-# renders (see CONTAINER_DIAGRAMS' comment -- DiagramServices.createContainer()
-# fix), a duplicated capability would visibly overlap/misplace in the PNG.
-# Not fixed here: an instance-unique-key redesign is a bigger change than
-# this session's scope, and the underlying model data (which entities
-# involve which capabilities) is correct regardless of the cosmetic overlap.
+# SHAPE CORRECTED (2026-08-16): the first version of this function nested
+# each involving capability inside its entity's container (apply_mapping()
+# targeting the entity's DNodeContainer). That does not match oa.odesign's
+# real definition of this diagram, and the mismatch only surfaced against a
+# real populated model (car_hmi.aird has zero OperationalCapability/
+# involvement data, so this path was never actually exercised by this
+# project's own tests) -- caught via another agent's live troubleshooting
+# against a populated model, cross-checked directly against oa.odesign:
+#   - COC_OperationalCapabilities is a free NodeMapping (createElements=
+#     "false", semanticElements="", WorkspaceImageDescription style) --
+#     designed to be a loose node on the canvas, not a child of a container.
+#   - COC_EntityOperationalCapabilityInvolvement is an EdgeMapping
+#     (sourceMapping=COC_OperationalCapabilities, targetMapping=
+#     COC_OperationalEntities) -- the involvement itself is a drawn edge,
+#     not containment.
+# Nesting the capability inside the entity container used a technically
+# "successful" apply_mapping() call that didn't match this shape, which is
+# consistent with why it broke down further once used non-headlessly:
+# corrupted bounds on drag (GMF's SetConnectionBendpointsCommand assumes
+# every edge's notation:Edge already has non-null bendpoints, which only a
+# real edge-creation call populates) and elements Capella's own Desktop
+# never displayed.
+#
+# Correct shape, implemented below: entities/actors as containers
+# (unchanged from the first version, DiagramServices.createContainer() --
+# same fix as CONTAINER_DIAGRAMS), capabilities as free nodes placed
+# directly on the diagram root (DiagramServices.createNode(), deduped by
+# id so a capability involved by more than one entity gets exactly one
+# node, not one per entity), and involvement edges
+# (DiagramServices.createEdge(), source=capability node, target=entity
+# container, per oa.odesign's own source/targetMapping) connecting them --
+# same real DDiagramSynchronizer/DDiagramElementSynchronizer pipeline
+# createContainer() already uses, for the same reason: apply_mapping()
+# alone does not reliably produce a fully-formed diagram element.
 #
 # Communication-means edges (COC_CommunicationMeans) and capability-to-
 # capability relations (COC_OC_Extends/Include/Generalization) are not
@@ -1674,20 +1707,23 @@ def create_class_diagram(
 _CAPABILITY_DIAGRAM_NAME = "Operational Capabilities Blank"
 _CAPABILITY_ENTITY_MAPPING = "COC_OperationalEntities"
 _CAPABILITY_NODE_MAPPING = "COC_OperationalCapabilities"
+_CAPABILITY_INVOLVEMENT_MAPPING = "COC_EntityOperationalCapabilityInvolvement"
 
 
 def create_capability_diagram(model_path: str, diagram_name: str | None = None) -> dict:
     """Create a real Capella (Sirius) "Operational Capabilities Blank"
     diagram and save the model -- the whole forest of root Operational
-    Entities/Actors (same as create_container_diagram's OperationalEntity
-    entry), each also showing the Operational Capabilities it's involved
-    with, nested inside its container.
+    Entities/Actors as containers, every Operational Capability any of them
+    is involved with as a free node (not nested -- see this module's
+    comment above CONTAINER_DIAGRAMS-adjacent constants for why), and an
+    involvement edge from each capability to every entity involved with it.
 
     OA-layer only (Operational Capabilities Blank is OA-specific, unlike
     create_class_diagram's CDB).
 
     Renders correctly headless (see CONTAINER_DIAGRAMS' comment in this
-    module for the root-cause investigation and fix).
+    module for the root-cause investigation and fix that applies to the
+    entity containers here too).
     """
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)
@@ -1709,32 +1745,33 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
                 raise ValueError("representation definition not found: {_CAPABILITY_DIAGRAM_NAME}")
             entityMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_ENTITY_MAPPING!r})
             capabilityMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_NODE_MAPPING!r})
-            if entityMapping is None or capabilityMapping is None:
-                raise ValueError("container/node mapping not found: {_CAPABILITY_ENTITY_MAPPING}/{_CAPABILITY_NODE_MAPPING}")
+            involvementMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_INVOLVEMENT_MAPPING!r})
+            if entityMapping is None or capabilityMapping is None or involvementMapping is None:
+                raise ValueError("mapping not found: {_CAPABILITY_ENTITY_MAPPING}/{_CAPABILITY_NODE_MAPPING}/{_CAPABILITY_INVOLVEMENT_MAPPING}")
             resolved_diagram_name = {diagram_name!r} or f"{{{_CAPABILITY_DIAGRAM_NAME!r}}} - {{pkg.get_label()}}"
 
-            # See create_container_diagram's comment: COC_OperationalEntities
-            # is a ContainerMapping, so it needs DiagramServices.createContainer()
-            # instead of apply_mapping(). COC_OperationalCapabilities (below)
-            # is a NodeMapping -- those already render fine via apply_mapping().
             diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
 
             tree = []
+            entity_dnodes = {{}}
+            capabilities_by_id = {{}}
+            involvements = []  # list of (entity_id, capability_id)
 
-            def _walk_apply(el, container_java, parent_id, depth):
+            def _walk_entities(el, container_java, parent_id, depth):
                 eid = _element_id(el)
                 tree.append({{"id": eid, "label": el.get_label() or eid, "parent_id": parent_id, "depth": depth, "kind": "Entity"}})
                 dnode = diagram_services.createContainer(entityMapping, el.get_java_object(), container_java, java_diag)
+                entity_dnodes[eid] = dnode
 
                 if hasattr(el, "get_involving_operational_capabilities"):
                     for cap in el.get_involving_operational_capabilities():
                         cap_id = _element_id(cap)
-                        tree.append({{"id": cap_id, "label": cap.get_label() or cap_id, "parent_id": eid, "depth": depth + 1, "kind": "Capability"}})
-                        apply_mapping(dnode, capabilityMapping, cap.get_java_object())
+                        capabilities_by_id[cap_id] = cap
+                        involvements.append((eid, cap_id))
 
                 if hasattr(el, "get_owned_entities"):
                     for child in el.get_owned_entities():
-                        _walk_apply(child, dnode, eid, depth + 1)
+                        _walk_entities(child, dnode, eid, depth + 1)
 
             model.start_transaction()
             try:
@@ -1750,7 +1787,25 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
                 if java_diag is None:
                     raise ValueError("createRepresentation returned None for {_CAPABILITY_DIAGRAM_NAME}")
                 for root in roots:
-                    _walk_apply(root, java_diag, None, 0)
+                    _walk_entities(root, java_diag, None, 0)
+
+                # Capabilities are free nodes on the diagram root, one per
+                # unique capability (never nested in an entity's container --
+                # oa.odesign has no such nesting for COC_OperationalCapabilities).
+                capability_dnodes = {{}}
+                for cap_id, cap in capabilities_by_id.items():
+                    cnode = diagram_services.createNode(capabilityMapping, cap.get_java_object(), java_diag, java_diag)
+                    capability_dnodes[cap_id] = cnode
+                    tree.append({{"id": cap_id, "label": cap.get_label() or cap_id, "parent_id": None, "depth": 1, "kind": "Capability"}})
+
+                # Involvement is a drawn edge (source=capability,
+                # target=entity, per oa.odesign's own source/targetMapping),
+                # not containment.
+                edge_count = 0
+                for eid, cap_id in involvements:
+                    diagram_services.createEdge(involvementMapping, capability_dnodes[cap_id], entity_dnodes[eid], capabilities_by_id[cap_id].get_java_object())
+                    edge_count += 1
+
                 model.commit_transaction()
             except Exception:
                 model.rollback_transaction()
@@ -1760,6 +1815,7 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
             _write_result({{
                 "tree": tree,
                 "diagram_name": resolved_diagram_name,
+                "edge_count": edge_count,
             }})
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
@@ -1768,6 +1824,7 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
 
     tree = pass1["tree"]
     resolved_diagram_name = pass1["diagram_name"]
+    edge_count = pass1["edge_count"]
     bounds_by_id = _layout_tree(tree)
 
     pass2_body = _diagram_include() + textwrap.dedent(f"""\
@@ -1791,7 +1848,15 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
             def _collect(de):
                 if de.eClass().getName() != "DEdge":
                     by_target_id[de.getTarget().getId()] = de
-                    if hasattr(de, "getOwnedDiagramElements"):
+                    # NOTE: hasattr(de, "getOwnedDiagramElements") is NOT a
+                    # safe guard here -- Py4J's dynamic proxy reports it
+                    # True generically for any Java object regardless of
+                    # whether the concrete class actually has the method,
+                    # and only fails when called (confirmed live: DNode,
+                    # e.g. a free-floating capability node, does not have
+                    # this method the way DNodeContainer does, but hasattr
+                    # claimed it did). Check the real EMF class instead.
+                    if de.eClass().getName() == "DNodeContainer":
                         for child in de.getOwnedDiagramElements():
                             _collect(child)
 
@@ -1823,6 +1888,7 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
         "diagram_uid": pass2["diagram_uid"],
         "diagram_name": pass2["diagram_name"],
         "node_count": pass2["node_count"],
+        "edge_count": edge_count,
     }
 
 

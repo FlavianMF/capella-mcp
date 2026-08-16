@@ -14,6 +14,7 @@ docs/decisions/0003-empacotamento-docker.md.
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -170,17 +171,80 @@ class TestDiagrams:
             bridge.create_class_diagram("car_hmi/car_hmi.aird", "not-a-layer")
 
     def test_create_capability_diagram_renders_non_blank_png(self):
-        """OCB, rooted at OperationalCapabilityPkg -- the one diagram
-        function in this module whose target isn't the entity/EntityPkg
-        every other one uses (regression guard for that), plus the same
-        DiagramServices.createContainer() render fix as the others."""
+        """OCB with only entities/actors involved (no OperationalCapability
+        data in car_hmi.aird by default) -- rooted at OperationalCapabilityPkg,
+        the one diagram function in this module whose target isn't the
+        entity/EntityPkg every other one uses (regression guard for that),
+        plus the same DiagramServices.createContainer() render fix as the
+        others. See test_create_capability_diagram_with_involvement_renders_
+        edges below for the free-node/edge shape this diagram actually
+        needs real capability data to exercise."""
         created = bridge.create_capability_diagram("car_hmi/car_hmi.aird")
         try:
             assert created["node_count"] > 0
+            assert created["edge_count"] == 0
 
             fetched = bridge.get_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
             assert fetched["uid"] == created["diagram_uid"]
             assert fetched["type"] == "Operational Capabilities Blank"
+
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
+    def test_create_capability_diagram_with_involvement_renders_edges(self):
+        """Regression guard for the OCB shape bug: the first version of
+        create_capability_diagram nested capabilities inside entity
+        containers, which doesn't match oa.odesign's real definition (free
+        node + involvement edge) -- car_hmi.aird has no
+        OperationalCapability/involvement data by default, so that bug was
+        never actually exercised by this project's own tests. This builds
+        real EntityOperationalCapabilityInvolvement data (python4capella has
+        no wrapper for it -- raw EMF via create_e_object_from_e_classifier,
+        same pattern bridge.py itself uses for anything unwrapped) and
+        checks the diagram actually gets edges, not just entity containers."""
+        abs_path = bridge.resolve_model_path("car_hmi/car_hmi.aird")
+        workspace_path = bridge._workspace_path_for_model(abs_path)
+        body = bridge._diagram_include() + textwrap.dedent(f"""\
+            try:
+                model = CapellaModel()
+                model.open({workspace_path!r})
+                se = model.get_system_engineering()
+                oa = se.get_operational_analysis()
+                entity_pkg = oa.get_entity_pkg()
+                cap_pkg = oa.get_operational_capability_pkg()
+                entities = {{e.get_label(): e for e in entity_pkg.get_owned_entities()}}
+                veiculo = entities["Veículo"]
+                motorista = entities["Motorista"]
+                inv_class = get_e_classifier("http://www.polarsys.org/capella/core/oa/" + capella_version(), "EntityOperationalCapabilityInvolvement")
+                model.start_transaction()
+                try:
+                    cap = OperationalCapability()
+                    cap.set_name("Integration Test Capability")
+                    cap_pkg.get_owned_operational_capabilities().add(cap)
+                    for entity in (veiculo, motorista):
+                        involvement = create_e_object_from_e_classifier(inv_class)
+                        involvement.setInvolved(entity.get_java_object())
+                        cap.get_java_object().getOwnedEntityOperationalCapabilityInvolvements().add(involvement)
+                    model.commit_transaction()
+                except Exception:
+                    model.rollback_transaction()
+                    raise
+                model.save()
+                _write_result({{"ok": True}})
+            except Exception as exc:
+                _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+            """)
+        bridge._run_script(body)
+
+        created = bridge.create_capability_diagram("car_hmi/car_hmi.aird")
+        try:
+            # 2 involvements (Veículo, Motorista) both pointing at the same
+            # capability -- must be deduped to one node, two edges.
+            assert created["edge_count"] == 2
 
             export = bridge.export_diagram("car_hmi/car_hmi.aird")
             match = [f for f in export["files"] if created["diagram_name"] in f]
