@@ -21,6 +21,7 @@ def test_all_v1_tools_registered():
         "create_capability_diagram",
         "create_scenario_diagram",
         "delete_diagram",
+        "layout_diagram",
         "export_diagram",
     }
 

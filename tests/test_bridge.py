@@ -683,3 +683,86 @@ class TestCreateScenarioDiagram:
         assert "Activity Interaction Scenario" in captured["scripts"][0]
         assert "InstanceRoleMaping AIS" in captured["scripts"][0]
         assert "Basic message mapping AIS" in captured["scripts"][1]
+
+
+class TestLayoutDiagram:
+    """layout_diagram applies Capella's native 'Layout > All' to an existing
+    diagram via GMF's OffscreenEditPartFactory + ArrangeRequest (single
+    headless pass).  The script is validated for syntax and key Java classes."""
+
+    def _capture_and_compile(self, monkeypatch, result_data=None):
+        captured = {}
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["script"] = script
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps(result_data or {"ok": True}))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+        return captured
+
+    def test_success(self, models_root, workspace_root, monkeypatch):
+        result = {
+            "success": True,
+            "diagram_uid": "uid-1",
+            "diagram_name": "Operational Entity Breakdown",
+        }
+        captured = self._capture_and_compile(monkeypatch, result)
+        bridge.layout_diagram("demo.aird", "uid-1")
+
+        script = captured["script"]
+        assert "OffscreenEditPartFactory" in script
+        assert "ArrangeRequest" in script
+        assert "ACTION_ARRANGE_ALL" in script
+        assert "SiriusGMFHelper" in script
+        assert "getGmfDiagram" in script
+        assert "createDiagramEditPart" in script
+        assert "canExecute" in script
+        assert "model.save()" in script
+        # error handling code is always present in the template; verify
+        # the success-path key classes are there (already checked above).
+
+    def test_diagram_not_found(self, models_root, workspace_root, monkeypatch):
+        result = {"error": "diagram not found: nonexistent-uid"}
+        captured = self._capture_and_compile(monkeypatch, result)
+        with pytest.raises(bridge.BridgeError, match="diagram not found"):
+            bridge.layout_diagram("demo.aird", "nonexistent-uid")
+
+    def test_layout_command_not_executable(self, models_root, workspace_root, monkeypatch):
+        result = {
+            "error": "layout command could not be executed for this diagram",
+            "diagram_uid": "uid-1",
+            "diagram_name": "Some Diagram",
+        }
+        captured = self._capture_and_compile(monkeypatch, result)
+        with pytest.raises(bridge.BridgeError, match="layout command could not be executed"):
+            bridge.layout_diagram("demo.aird", "uid-1")
+
+    def test_script_uses_diagram_include(self, models_root, workspace_root, monkeypatch):
+        """layout_diagram must include diagram.py for get_all_diagrams()."""
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.layout_diagram("demo.aird", "uid-1")
+        assert "simplified_api/diagram.py" in captured["script"]
+
+    def test_script_resolves_model_path(self, models_root, workspace_root, monkeypatch):
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.layout_diagram("demo.aird", "uid-1")
+        assert "demo.aird" in captured["script"]
+
+    def test_script_passes_diagram_uid(self, models_root, workspace_root, monkeypatch):
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.layout_diagram("demo.aird", "my-uid-123")
+        assert "my-uid-123" in captured["script"]
+
+    def test_shell_reflection_pattern(self, models_root, workspace_root, monkeypatch):
+        """Verify the Shell constructor is found via reflection (same pattern
+        as RefreshLayoutCommand in create_scenario_diagram)."""
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.layout_diagram("demo.aird", "uid-1")
+        script = captured["script"]
+        assert "getDeclaredConstructors" in script
+        assert "ShellCls" in script
+        assert "DisplayCls" in script

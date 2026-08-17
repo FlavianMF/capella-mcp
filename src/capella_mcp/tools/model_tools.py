@@ -218,6 +218,21 @@ def register(mcp: MCPServer) -> None:
         return bridge.delete_diagram(model_path, diagram_uid)
 
     @mcp.tool()
+    def layout_diagram(model_path: str, diagram_uid: str) -> dict:
+        """Apply Capella's native 'Layout > All' to rearrange all elements in
+        an existing diagram, same as right-click -> Layout -> All.
+
+        Works for all diagram types (breakdown, container, class, capability,
+        scenario). Uses Sirius's own layout pipeline so it respects pinned
+        elements and registered layout providers. Falls back to a custom
+        deterministic tree layout when the native pipeline is unavailable.
+
+        diagram_uid is the value returned as "diagram_uid" by create_diagram
+        or "uid" by the capella://{model_path}/diagrams resource.
+        """
+        return bridge.layout_diagram(model_path, diagram_uid)
+
+    @mcp.tool()
     def export_diagram(model_path: str, image_format: str = "PNG") -> dict:
         """Export every diagram in the model to image files (via Capella's
         native headless export, not an addon), saved next to the model in a

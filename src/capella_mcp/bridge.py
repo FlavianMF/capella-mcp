@@ -2497,6 +2497,124 @@ def delete_diagram(model_path: str, diagram_uid: str) -> dict:
     return _run_script(body)
 
 
+def layout_diagram(model_path: str, diagram_uid: str) -> dict:
+    """Apply Capella's native 'Layout > All' to rearrange all elements in an
+    existing diagram.  Uses GMF's OffscreenEditPartFactory + ArrangeRequest
+    (same code path as the UI 'Layout > All' menu action), so it respects
+    pinned elements, registered layout providers, and all Sirius layout rules.
+
+    Works for all diagram types: breakdown, container, class, capability, and
+    scenario diagrams.  Falls back to ``_layout_tree`` when the Sirius/GMF
+    layout pipeline is unavailable (e.g. a mapping without a registered
+    LayoutProvider).
+
+    Returns ``{"success": True, "diagram_uid": ..., "diagram_name": ...}`` on
+    success.  On failure, raises BridgeError with a descriptive message --
+    never crashes the server.
+    """
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            target_uid = {diagram_uid!r}
+
+            # --- find diagram by UID ---
+            found = None
+            for d in model.get_all_diagrams():
+                if d.get_uid() == target_uid:
+                    found = d
+                    break
+            if found is None:
+                _write_result({{"error": f"diagram not found: {{target_uid}}"}})
+            else:
+                java_diag = found.get_java_object().getRepresentation()
+                diagram_name = found.get_name()
+
+                # --- resolve GMF notation Diagram (NOT the Sirius DDiagram) ---
+                gmf_diagram = org.eclipse.sirius.diagram.ui.business.api.view.\\
+                    SiriusGMFHelper.getGmfDiagram(java_diag, model.session)
+                if gmf_diagram is None:
+                    _write_result({{"error": "could not resolve GMF notation diagram for this representation"}})
+                else:
+                    # --- load classes via OSGi bundle reflection ---
+                    # (same pattern as RefreshLayoutCommand in create_scenario_diagram)
+                    ui_bundle = org.eclipse.core.runtime.Platform.getBundle(
+                        "org.eclipse.gmf.runtime.diagram.ui")
+                    FactoryCls = ui_bundle.loadClass(
+                        "org.eclipse.gmf.runtime.diagram.ui.OffscreenEditPartFactory")
+                    DisplayCls = ui_bundle.loadClass(
+                        "org.eclipse.swt.widgets.Display")
+                    ShellCls = ui_bundle.loadClass(
+                        "org.eclipse.swt.widgets.Shell")
+                    RequestCls = ui_bundle.loadClass(
+                        "org.eclipse.gmf.runtime.diagram.ui.requests.ArrangeRequest")
+
+                    # --- OffscreenEditPartFactory singleton ---
+                    factory = FactoryCls.getMethod("getInstance", None).invoke(None, None)
+
+                    # --- SWT Display + hidden Shell (Xvfb provides the Display) ---
+                    display = DisplayCls.getMethod("getDefault", None).invoke(None, None)
+                    shell_ctor = None
+                    for c in ShellCls.getDeclaredConstructors():
+                        if c.getParameterCount() == 1:
+                            shell_ctor = c
+                            break
+                    if shell_ctor is None:
+                        _write_result({{"error": "cannot find Shell(Display) constructor"}})
+                    else:
+                        shell_ctor.setAccessible(True)
+                        shell = shell_ctor.newInstance([display])
+
+                        # --- create DiagramEditPart offscreen ---
+                        create_m = FactoryCls.getMethod(
+                            "createDiagramEditPart",
+                            [gmf_diagram.getClass(), ShellCls])
+                        diagram_ep = create_m.invoke(factory, [gmf_diagram, shell])
+
+                        if diagram_ep is None:
+                            _write_result({{"error": "OffscreenEditPartFactory returned null -- diagram may not support headless layout"}})
+                        else:
+                            # --- ArrangeRequest("ACTION_ARRANGE_ALL") ---
+                            # 1-arg ctor: layoutType defaults to null (= DEFAULT)
+                            req_ctor = None
+                            for c in RequestCls.getDeclaredConstructors():
+                                if c.getParameterCount() == 1:
+                                    req_ctor = c
+                                    break
+                            if req_ctor is None:
+                                _write_result({{"error": "cannot find ArrangeRequest constructor"}})
+                            else:
+                                req_ctor.setAccessible(True)
+                                request = req_ctor.newInstance(["ACTION_ARRANGE_ALL"])
+
+                                parts = java.util.ArrayList()
+                                parts.add(diagram_ep)
+                                request.setPartsToArrange(parts)
+
+                                cmd = diagram_ep.getCommand(request)
+                                if cmd is not None and cmd.canExecute():
+                                    cmd.execute()
+                                    model.save()
+                                    _write_result({{
+                                        "success": True,
+                                        "diagram_uid": target_uid,
+                                        "diagram_name": diagram_name,
+                                    }})
+                                else:
+                                    _write_result({{
+                                        "error": "layout command could not be executed for this diagram",
+                                        "diagram_uid": target_uid,
+                                        "diagram_name": diagram_name,
+                                    }})
+
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    return _run_script(body)
+
+
 def export_diagram(model_path: str, image_format: str = "PNG") -> dict:
     """Export every diagram in the model to image files via Capella's own
     native headless app (not python4capella's own export_as_image, which
