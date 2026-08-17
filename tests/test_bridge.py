@@ -67,12 +67,12 @@ class TestResolveModelPath:
 class TestRunScriptProtocol:
     def test_list_layers_parses_result(self, models_root, workspace_root, monkeypatch):
         expected = {"layers": [{"layer": "oa", "present": True}]}
-        monkeypatch.setattr(bridge.subprocess, "run", _run_writing(expected))
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run_writing(expected))
         assert bridge.list_layers("demo.aird") == expected
 
     def test_error_in_result_raises_bridge_error(self, models_root, workspace_root, monkeypatch):
         monkeypatch.setattr(
-            bridge.subprocess, "run", _run_writing({"error": "boom", "traceback": "tb"})
+            bridge, "_spawn_and_wait", _run_writing({"error": "boom", "traceback": "tb"})
         )
         with pytest.raises(bridge.BridgeError, match="boom"):
             bridge.list_layers("demo.aird")
@@ -81,7 +81,7 @@ class TestRunScriptProtocol:
         def _run(cmd, capture_output, text, timeout):
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="something crashed")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         with pytest.raises(bridge.BridgeError, match="produced no result"):
             bridge.list_layers("demo.aird")
 
@@ -89,7 +89,7 @@ class TestRunScriptProtocol:
         def _run(cmd, capture_output, text, timeout):
             raise subprocess.TimeoutExpired(cmd, timeout)
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         with pytest.raises(bridge.BridgeError, match="timed out"):
             bridge.list_layers("demo.aird")
 
@@ -97,7 +97,7 @@ class TestRunScriptProtocol:
         def _run(*args, **kwargs):
             raise AssertionError("subprocess.run should not be called for an invalid layer")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         with pytest.raises(bridge.BridgeError, match="unknown layer"):
             bridge.list_elements("demo.aird", "not-a-layer")
 
@@ -117,7 +117,7 @@ class TestGeneratedScripts:
             (call_dir / "result.json").write_text(json.dumps(result_data or {"ok": True}))
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         return captured
 
     def test_list_elements_with_type_filter(self, models_root, workspace_root, monkeypatch):
@@ -180,6 +180,25 @@ class TestGeneratedScripts:
             bridge.create_element("demo.aird", "la", type_name, "X", parent_id="parent-id")
             assert expected_call in captured["script"]
 
+    def test_create_element_functional_exchange(self, models_root, workspace_root, monkeypatch):
+        """Verified live against a real model: ports via Function.get_outputs()/
+        .get_inputs() (real containment on Activity.ecore, not the
+        FunctionSpecification-only ownedFunctionPorts), exchange wiring via
+        set_source_port()/set_target_port(), containment via
+        get_owned_functional_exchanges() on the parent_id Function."""
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.create_element(
+            "demo.aird", "oa", "FunctionalExchange", "X",
+            parent_id="parent-id",
+            attributes={"source_id": "src-id", "target_id": "tgt-id"},
+        )
+        script = captured["script"]
+        assert "get_owned_functional_exchanges" in script
+        assert "get_outputs" in script
+        assert "get_inputs" in script
+        assert "set_source_port" in script
+        assert "set_target_port" in script
+
     def test_delete_diagram(self, models_root, workspace_root, monkeypatch):
         captured = self._capture_and_compile(
             monkeypatch, {"deleted": True, "uid": "u1", "name": "N"}
@@ -212,7 +231,7 @@ class TestExportDiagram:
             (nested / "Some Diagram.png").write_bytes(b"\x89PNG")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         result = bridge.export_diagram("demo.aird")
         assert len(result["files"]) == 1
         assert result["files"][0].endswith("Some Diagram.png")
@@ -235,7 +254,7 @@ class TestCreateDiagramBreakdown:
             (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         return captured
 
     def test_three_pass_round_trip(self, models_root, workspace_root, monkeypatch):
@@ -278,7 +297,7 @@ class TestCreateDiagramBreakdown:
         def _run(*args, **kwargs):
             raise AssertionError("subprocess.run should not be called for an unknown combo")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         with pytest.raises(bridge.BridgeError, match="no breakdown diagram known"):
             bridge.create_diagram("demo.aird", "la", type_name="NotARealType")
 
@@ -328,7 +347,7 @@ class TestCreateContainerDiagram:
             (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         return captured
 
     def test_two_pass_round_trip(self, models_root, workspace_root, monkeypatch):
@@ -402,7 +421,7 @@ class TestCreateContainerDiagram:
         def _run(*args, **kwargs):
             raise AssertionError("subprocess.run should not be called for an unknown combo")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         with pytest.raises(bridge.BridgeError, match="no container/blank diagram known"):
             bridge.create_container_diagram("demo.aird", "la", "LogicalComponent")
 
@@ -424,7 +443,7 @@ class TestCreateClassDiagram:
             (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         return captured
 
     def test_two_pass_round_trip(self, models_root, workspace_root, monkeypatch):
@@ -461,7 +480,7 @@ class TestCreateClassDiagram:
         def _run(*args, **kwargs):
             raise AssertionError("subprocess.run should not be called for an unknown layer")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         with pytest.raises(bridge.BridgeError, match="unknown layer"):
             bridge.create_class_diagram("demo.aird", "not-a-layer")
 
@@ -491,7 +510,7 @@ class TestCreateCapabilityDiagram:
             (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(bridge.subprocess, "run", _run)
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
         return captured
 
     def test_two_pass_round_trip(self, models_root, workspace_root, monkeypatch):

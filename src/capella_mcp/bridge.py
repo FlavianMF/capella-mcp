@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import subprocess
 import textwrap
 import traceback
@@ -599,6 +600,36 @@ def _preamble(result_path: Path) -> str:
         """)
 
 
+def _spawn_and_wait(
+    cmd: list[str], capture_output: bool = True, text: bool = True, timeout: float | None = None
+) -> subprocess.CompletedProcess:
+    """subprocess.run()-alike, kept as its own seam (rather than calling
+    subprocess.run directly) so both call sites and the unit tests can mock
+    it uniformly.
+
+    xvfb-run is a shell wrapper that forks Xvfb and execs capella as
+    children of its own process -- subprocess.run(timeout=...)'s implicit
+    process.kill() on timeout only SIGKILLs that top-level shell, leaving
+    the whole Xvfb+Capella(JVM) tree running forever. Put the child in its
+    own process group (start_new_session=True) and, on timeout, kill the
+    whole group so a timed-out call doesn't leak a Capella process.
+    """
+    proc_handle = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc_handle.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc_handle.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc_handle.wait()
+        raise
+    return subprocess.CompletedProcess(cmd, proc_handle.returncode, stdout, stderr)
+
+
 def _run_script(script_body: str, timeout: float = DEFAULT_TIMEOUT) -> dict:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     python4capella_project = _ensure_python4capella_project()
@@ -624,7 +655,7 @@ def _run_script(script_body: str, timeout: float = DEFAULT_TIMEOUT) -> dict:
         f"workspace:/{project_dir.name}/{script_path.name}",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = _spawn_and_wait(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise BridgeError(f"Capella headless call timed out after {timeout}s") from exc
 
@@ -777,8 +808,9 @@ def create_element(
                 # get_owned_logical_components() (nesting). LogicalComponent,
                 # SystemFunction, LogicalFunction, OperationalActivity,
                 # OperationalActor, OperationalEntity, OperationalCapability,
-                # StateMachine, Region, State, Mode, DataPkg, and Class have
-                # all been validated against a real model this way. Other
+                # StateMachine, Region, State, Mode, DataPkg, Class, and
+                # FunctionalExchange have all been validated against a real
+                # model this way. Other
                 # layer/type combinations still need their own container
                 # resolved the same way before create_element will actually
                 # persist anything for them.
@@ -931,6 +963,68 @@ def create_element(
                             f"{{type(container).__name__}} (parent_id must be a DataPkg)"
                         )
                     container.get_owned_classes().add(el)
+                elif {type_name!r} == "FunctionalExchange":
+                    # Unlike every other type above, an exchange isn't
+                    # created "in" a simple container -- it connects two
+                    # existing Functions (any Function subtype: Operational
+                    # Activity/SystemFunction/LogicalFunction) via a pair of
+                    # ports it creates on them, and is owned by their
+                    # nearest common ancestor Function. There's no
+                    # package-level root, so parent_id here means that
+                    # owning Function (reusing the same container-lookup
+                    # done above); source_id/target_id (element ids of the
+                    # two Functions to connect) travel through `attributes`
+                    # since there's no other slot for a second id.
+                    # Verified end-to-end against a real model: ports via
+                    # Function.get_outputs()/.get_inputs() (real containment,
+                    # declared in Activity.ecore -- NOT the FunctionSpecification-
+                    # only ownedFunctionPorts some Capella docs mention, which
+                    # OperationalActivity/SystemFunction/LogicalFunction don't
+                    # have), exchange via FunctionalExchange.set_source_port()/
+                    # .set_target_port() (already wrapped in capella.py) and
+                    # containment via Function.get_owned_functional_exchanges().
+                    if {parent_id!r} is None:
+                        raise ValueError(
+                            "FunctionalExchange requires parent_id (the owning "
+                            "Function -- typically the nearest common ancestor "
+                            "of source/target)"
+                        )
+                    if not hasattr(container, "get_owned_functional_exchanges"):
+                        raise AttributeError(
+                            "no get_owned_functional_exchanges() found on "
+                            f"{{type(container).__name__}} (parent_id must be a Function)"
+                        )
+                    attrs = {attributes!r} or {{}}
+                    source_id = attrs.get("source_id")
+                    target_id = attrs.get("target_id")
+                    if not source_id or not target_id:
+                        raise ValueError(
+                            "FunctionalExchange requires attributes={{'source_id': ..., "
+                            "'target_id': ...}} (element ids of two existing Functions)"
+                        )
+                    source_fn = target_fn = None
+                    for candidate in layer_obj.get_all_contents() if hasattr(layer_obj, "get_all_contents") else []:
+                        cid = _element_id(candidate)
+                        if cid == source_id:
+                            source_fn = candidate
+                        if cid == target_id:
+                            target_fn = candidate
+                    if source_fn is None:
+                        raise ValueError(f"source_id not found in layer: {{source_id}}")
+                    if target_fn is None:
+                        raise ValueError(f"target_id not found in layer: {{target_id}}")
+
+                    out_port = FunctionOutputPort()
+                    out_port.set_name({name!r} + " (out)")
+                    source_fn.get_outputs().add(out_port)
+
+                    in_port = FunctionInputPort()
+                    in_port.set_name({name!r} + " (in)")
+                    target_fn.get_inputs().add(in_port)
+
+                    el.set_source_port(out_port)
+                    el.set_target_port(in_port)
+                    container.get_owned_functional_exchanges().add(el)
                 else:
                     container.get_contents().append(el)
                 model.commit_transaction()
@@ -2077,7 +2171,7 @@ def export_diagram(model_path: str, image_format: str = "PNG") -> dict:
         "-imageFormat", image_format,
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT)
+        proc = _spawn_and_wait(cmd, capture_output=True, text=True, timeout=DEFAULT_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
         raise BridgeError(f"Capella diagram export timed out after {DEFAULT_TIMEOUT}s") from exc
     # KNOWN BUG, fixed 2026-08-15: the real exporter writes to a NESTED

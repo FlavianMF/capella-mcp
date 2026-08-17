@@ -57,7 +57,13 @@ def register(mcp: MCPServer) -> None:
         OperationalCapability, StateMachine (parent_id = a Component),
         Region (parent_id = a StateMachine), State/Mode (parent_id = a
         Region), DataPkg/Class (parent_id = an existing DataPkg -- every
-        layer already has a default one). Any other type_name silently
+        layer already has a default one), FunctionalExchange (parent_id =
+        the owning Function -- typically the nearest common ancestor of
+        source/target; attributes must include source_id/target_id, the
+        element ids of two existing Functions of the same kind as the
+        layer, e.g. two OperationalActivity ids for layer="oa" -- a
+        FunctionOutputPort/FunctionInputPort pair is created on them and
+        wired to the exchange automatically). Any other type_name silently
         fails to persist -- the call returns success with a valid id, but
         the element never actually appears in the model on a later call.
         """

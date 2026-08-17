@@ -68,6 +68,37 @@ def test_update_element_persists_across_separate_calls():
 
 
 @pytest.mark.skipif(_car_hmi_missing, reason="tests/fixtures/car_hmi/car_hmi.aird missing")
+def test_create_functional_exchange_round_trips():
+    """Regression guard: FunctionalExchange used to silently not persist --
+    create_element fell through to the broken get_contents().append(el)
+    fallback (a disconnected Python-side snapshot, not a live EMF
+    collection), so a follow-up get_element always reported "element not
+    found" even though create_element itself reported fake success. Fixed
+    by routing through Function.get_outputs()/.get_inputs() (real
+    containment, ports) + set_source_port()/set_target_port() + the owning
+    Function's get_owned_functional_exchanges() (containment for the
+    exchange itself)."""
+    activities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalActivity")
+    by_label = {e["label"]: e["id"] for e in activities["elements"]}
+    parent_id = by_label["Exibir velocidade do veículo"]
+    src_id = by_label["Monitorar velocidade do veículo"]
+    tgt_id = by_label["Fornecer velocidade do veículo"]
+
+    created = bridge.create_element(
+        "car_hmi/car_hmi.aird", "oa", "FunctionalExchange", "Velocidade Monitorada",
+        parent_id=parent_id,
+        attributes={"source_id": src_id, "target_id": tgt_id},
+    )
+    assert created["id"] is not None
+
+    # separate call, separate Capella process -- proves save() actually persisted
+    fetched = bridge.get_element("car_hmi/car_hmi.aird", created["id"])
+    assert fetched["id"] == created["id"]
+    assert fetched["label"] == "Velocidade Monitorada"
+    assert fetched["type"] == "FunctionalExchange"
+
+
+@pytest.mark.skipif(_car_hmi_missing, reason="tests/fixtures/car_hmi/car_hmi.aird missing")
 class TestDiagrams:
     """Round-trips against car_hmi.aird (has real OA entities/activities,
     unlike the plain demo.aird). Every created diagram is deleted again at
