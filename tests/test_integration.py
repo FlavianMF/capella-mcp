@@ -341,6 +341,16 @@ class TestDiagrams:
             match = [f for f in export["files"] if created["diagram_name"] in f]
             assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
             assert Path(match[0]).stat().st_size > 300
+
+            # Regression guard (found 2026-08-17): CapellaServices.
+            # creationService() used to leave the represented Entity's own
+            # getName()/get_label() corrupted to a generic placeholder
+            # ("OA 2") after auto-creating its self-representing Part --
+            # confirm the entity's real label still reads back correctly
+            # after being used as an InstanceRole's representedInstance.
+            for entity in entities["elements"][:2]:
+                fetched_entity = bridge.get_element("car_hmi/car_hmi.aird", entity["id"])
+                assert fetched_entity["label"] == entity["label"]
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
 

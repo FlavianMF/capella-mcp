@@ -1045,9 +1045,35 @@ def create_element(
                     try:
                         el.get_java_object().eSet(feature, represented.get_java_object())
                     except Exception:
+                        # BUG (found 2026-08-17 via a real OES lifeline
+                        # header rendering "OA 2"/"OA 3" instead of the
+                        # represented Entity's real name): CapellaServices.
+                        # creationService() auto-creates the Entity's
+                        # self-representing Part with an auto-generated
+                        # placeholder name ("OA 2", never the Entity's own
+                        # name) -- and once that Part exists, Capella's
+                        # label-computation service for the Entity itself
+                        # (get_label(), and Sirius's own
+                        # ScenarioService.getInstanceRoleLabel() used by the
+                        # odesign's lifeline-header labelExpression) reads
+                        # THROUGH to the Part's name instead of the Entity's
+                        # own -- confirmed live: even the Entity's raw
+                        # getName() reads back as "OA 2" after
+                        # creationService() runs. So the represented
+                        # Entity's real name MUST be captured before this
+                        # call, not re-read after -- re-reading after would
+                        # silently capture the already-corrupted "OA 2"
+                        # instead. Naming the (possibly pre-existing, shared/
+                        # reused across every InstanceRole ever pointed at
+                        # this Entity) Part fixes both the Part's own name
+                        # and the Entity's derived getName()/get_label() in
+                        # one write.
+                        represented_name = represented.get_java_object().getName()
                         capella_services = org.polarsys.capella.core.sirius.analysis.CapellaServices.getService()
                         capella_services.creationService(represented.get_java_object())
                         part = represented.get_java_object().getAbstractTypedElements().get(0)
+                        if represented_name and part.getName() != represented_name:
+                            part.setName(represented_name)
                         el.get_java_object().eSet(feature, part)
                     container.get_owned_instance_roles().add(el)
                 elif {type_name!r} == "SequenceMessage":
@@ -2154,6 +2180,25 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
 #     setRepresentedInstance's overload (interface-typed parameter vs a
 #     concrete arg class) either way -- set via raw EMF eSet(), not the
 #     named setter.
+#
+#   - COSMETIC BUG, found and fixed 2026-08-17: OES lifeline headers
+#     rendered a generic placeholder ("OA 2", "OA 3", ...) instead of the
+#     represented Entity's real name (OAS was never affected -- its
+#     InstanceRoles represent the Function directly, no Part involved).
+#     Root cause: CapellaServices.creationService() auto-creates the
+#     Entity's self-representing Part with an auto-generated placeholder
+#     name, never the Entity's own -- and once that Part exists, Capella's
+#     label-computation service for the Entity ITSELF (get_label(), and
+#     Sirius's own ScenarioService.getInstanceRoleLabel() that the odesign's
+#     lifeline-header labelExpression calls) reads through to the Part's
+#     name instead of the Entity's -- confirmed live: even the Entity's raw
+#     getName() reads back as the placeholder after creationService() runs.
+#     Fix: capture the Entity's real name BEFORE calling creationService()
+#     (re-reading after would silently capture the already-corrupted
+#     placeholder), then name the Part to match. Since the Part is
+#     lazily-created-once-and-reused across every InstanceRole that ever
+#     represents that Entity (any Scenario), this also retroactively fixes
+#     every InstanceRole already pointing at a previously-corrupted Part.
 #
 #   - SequenceMessage construction: no simple settable source/target: build
 #     a real EventSentOperation/EventReceiptOperation pair

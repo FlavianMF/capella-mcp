@@ -214,7 +214,15 @@ class TestGeneratedScripts:
         generated script always includes both code paths (the direct eSet()
         attempted first, the Part-indirection as its except fallback) --
         which one actually runs depends on the represented element's real
-        Java type at Capella runtime, not at script-generation time."""
+        Java type at Capella runtime, not at script-generation time.
+
+        Also a regression guard for a real OES lifeline-header bug (found
+        2026-08-17): creationService() auto-creates the Part with a
+        placeholder name ("OA 2") and, once that Part exists, even the
+        Entity's OWN getName()/get_label() reads back through it -- so the
+        represented Entity's real name must be captured BEFORE
+        creationService() runs, not re-read after (which would silently
+        capture the already-corrupted placeholder)."""
         captured = self._capture_and_compile(monkeypatch)
         bridge.create_element(
             "demo.aird", "oa", "InstanceRole", "X",
@@ -226,6 +234,12 @@ class TestGeneratedScripts:
         assert "representedInstance" in script
         assert "CapellaServices" in script
         assert "getAbstractTypedElements" in script
+        assert "part.setName" in script
+        # regression guard for the exact bug: represented_name must be read
+        # BEFORE creationService() is called, not after
+        represented_name_idx = script.index("represented_name = represented.get_java_object().getName()")
+        creation_service_idx = script.index("capella_services.creationService(")
+        assert represented_name_idx < creation_service_idx
 
     def test_create_element_sequence_message(self, models_root, workspace_root, monkeypatch):
         """Verified live: no capella.py wrapper for MessageEnd/
