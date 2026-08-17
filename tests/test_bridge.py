@@ -199,6 +199,54 @@ class TestGeneratedScripts:
         assert "set_source_port" in script
         assert "set_target_port" in script
 
+    def test_create_element_scenario(self, models_root, workspace_root, monkeypatch):
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.create_element("demo.aird", "oa", "Scenario", "X", parent_id="cap-id")
+        assert "get_owned_scenarios" in captured["script"]
+
+    def test_create_element_instance_role(self, models_root, workspace_root, monkeypatch):
+        """Verified live: representedInstance wants an AbstractInstance, not
+        the represented Entity/Function directly -- Entity needs an
+        indirection through its own self-representing Part
+        (CapellaServices.creationService()+getAbstractTypedElements()),
+        while AbstractFunction (Operational/System/LogicalFunction) directly
+        implements AbstractInstance and takes the direct eSet(). The
+        generated script always includes both code paths (the direct eSet()
+        attempted first, the Part-indirection as its except fallback) --
+        which one actually runs depends on the represented element's real
+        Java type at Capella runtime, not at script-generation time."""
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.create_element(
+            "demo.aird", "oa", "InstanceRole", "X",
+            parent_id="scenario-id",
+            attributes={"represented_instance_id": "entity-id"},
+        )
+        script = captured["script"]
+        assert "get_owned_instance_roles" in script
+        assert "representedInstance" in script
+        assert "CapellaServices" in script
+        assert "getAbstractTypedElements" in script
+
+    def test_create_element_sequence_message(self, models_root, workspace_root, monkeypatch):
+        """Verified live: no capella.py wrapper for MessageEnd/
+        EventSentOperation/EventReceiptOperation -- built via EMF_API.py's
+        create_e_object(), same primitive capella.py's own constructors use
+        internally."""
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.create_element(
+            "demo.aird", "oa", "SequenceMessage", "X",
+            parent_id="scenario-id",
+            attributes={"source_id": "ir-a-id", "target_id": "ir-b-id"},
+        )
+        script = captured["script"]
+        assert "get_owned_messages" in script
+        assert "getOwnedInteractionFragments" in script
+        assert "getOwnedEvents" in script
+        assert "EventSentOperation" in script
+        assert "EventReceiptOperation" in script
+        assert "setSendingEnd" in script
+        assert "setReceivingEnd" in script
+
     def test_delete_diagram(self, models_root, workspace_root, monkeypatch):
         captured = self._capture_and_compile(
             monkeypatch, {"deleted": True, "uid": "u1", "name": "N"}
@@ -553,3 +601,85 @@ class TestCreateCapabilityDiagram:
         # call per unique capability, not one per involving entity).
         assert "capabilities_by_id" in captured["scripts"][0]
         assert "set_bounds" in captured["scripts"][1]
+
+
+class TestCreateScenarioDiagram:
+    """create_scenario_diagram (OES/OAS sequence diagrams) is 2-pass like
+    create_capability_diagram, but for a different reason: pass 1 creates
+    the representation + InstanceRole nodes only; the bordered "default
+    execution" child nodes BasicMessageMapping's source/targetMapping
+    actually point at (confirmed in oa.odesign) only materialize after a
+    save+reopen cycle, so pass 2 (reopen) creates Message edges and runs
+    Sirius's own sequence-diagram ordering-repair chain
+    (DialectManager.refresh() + RefreshLayoutCommand) once, right before
+    the final save -- the actual export-time-NPE fix, see the long comment
+    above _SCENARIO_DIAGRAM_MAPPINGS in bridge.py."""
+
+    def _mock_sequence(self, monkeypatch, results):
+        captured = {"scripts": []}
+        results_iter = iter(results)
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["scripts"].append(script)
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+        return captured
+
+    def test_unknown_scenario_kind_rejected_before_subprocess(self, models_root, workspace_root, monkeypatch):
+        def _run(*args, **kwargs):
+            raise AssertionError("subprocess should not be called for an invalid scenario_kind")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+        with pytest.raises(bridge.BridgeError, match="unknown scenario_kind"):
+            bridge.create_scenario_diagram("demo.aird", "scenario-id", scenario_kind="XYZ")
+
+    def test_two_pass_round_trip_oes(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {
+            "diagram_name": "Operational Interaction Scenario - My Scenario",
+            "node_count": 2,
+        }
+        pass2_result = {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Operational Interaction Scenario - My Scenario",
+            "edge_count": 1,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        result = bridge.create_scenario_diagram("demo.aird", "scenario-id", scenario_kind="OES")
+
+        assert result == {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Operational Interaction Scenario - My Scenario",
+            "node_count": 2,
+            "edge_count": 1,
+        }
+        assert len(captured["scripts"]) == 2
+        assert "Instancerole Mapping OA" in captured["scripts"][0]
+        assert "diagram_services.createNode" in captured["scripts"][0]
+        assert "DialectManager" in captured["scripts"][0]
+        # pass 2: message edges + the ordering-repair fix, not pass 1
+        assert "Basic message mapping OA" in captured["scripts"][1]
+        assert "getOwnedBorderedNodes" in captured["scripts"][1]
+        assert "diagram_services.createEdge" in captured["scripts"][1]
+        assert "getCoveredInstanceRoles" in captured["scripts"][1]
+        assert "RefreshLayoutCommand" in captured["scripts"][1]
+        assert "SiriusGMFHelper" in captured["scripts"][1]
+        assert "getDeclaredConstructors" in captured["scripts"][1]
+
+    def test_oas_uses_activity_scenario_mappings(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {"diagram_name": "Activity Interaction Scenario - My Scenario", "node_count": 2}
+        pass2_result = {
+            "diagram_uid": "uid-1",
+            "diagram_name": "Activity Interaction Scenario - My Scenario",
+            "edge_count": 1,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        bridge.create_scenario_diagram("demo.aird", "scenario-id", scenario_kind="OAS")
+
+        assert "Activity Interaction Scenario" in captured["scripts"][0]
+        assert "InstanceRoleMaping AIS" in captured["scripts"][0]
+        assert "Basic message mapping AIS" in captured["scripts"][1]

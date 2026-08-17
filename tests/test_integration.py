@@ -306,3 +306,79 @@ class TestDiagrams:
             assert Path(match[0]).stat().st_size > 300
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
+    def test_create_scenario_diagram_oes_renders_non_blank_png(self):
+        """Regression guard for the OAS/OES export-time NPE fix (see the
+        long comment above _SCENARIO_DIAGRAM_MAPPINGS/create_scenario_diagram
+        in bridge.py) -- InstanceRoles represent existing OperationalEntitys
+        here (OES's case: representedInstance needs the entity's own
+        self-representing Part, via CapellaServices.creationService(), not
+        the entity directly)."""
+        capabilities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalCapability")
+        cap_id = capabilities["elements"][0]["id"]
+        entities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalEntity")
+        entity_ids = [e["id"] for e in entities["elements"]][:2]
+
+        scenario = bridge.create_element("car_hmi/car_hmi.aird", "oa", "Scenario", "OES Integration Scenario", parent_id=cap_id)
+        ir_a = bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "InstanceRole", "IR A",
+            parent_id=scenario["id"], attributes={"represented_instance_id": entity_ids[0]},
+        )
+        ir_b = bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "InstanceRole", "IR B",
+            parent_id=scenario["id"], attributes={"represented_instance_id": entity_ids[1]},
+        )
+        bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "SequenceMessage", "OES Integration Message",
+            parent_id=scenario["id"], attributes={"source_id": ir_a["id"], "target_id": ir_b["id"]},
+        )
+
+        created = bridge.create_scenario_diagram("car_hmi/car_hmi.aird", scenario["id"], scenario_kind="OES")
+        try:
+            assert created["node_count"] == 2
+            assert created["edge_count"] == 1
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
+    def test_create_scenario_diagram_oas_renders_non_blank_png(self):
+        """OAS's case: InstanceRoles represent existing OperationalActivitys
+        -- AbstractFunction (their common ancestor) directly implements
+        AbstractInstance, so representedInstance is set directly (no Part
+        indirection) -- exercises the OTHER branch of create_element's
+        InstanceRole try/except that test_create_scenario_diagram_oes_
+        renders_non_blank_png doesn't."""
+        capabilities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalCapability")
+        cap_id = capabilities["elements"][0]["id"]
+        activities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalActivity")
+        root = next(e for e in activities["elements"] if e["label"] == "Exibir velocidade do veículo")
+        leaves = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalActivity")
+        act_ids = [e["id"] for e in leaves["elements"] if e["label"] not in ("Root Operational Activity", root["label"])][:2]
+
+        scenario = bridge.create_element("car_hmi/car_hmi.aird", "oa", "Scenario", "OAS Integration Scenario", parent_id=cap_id)
+        ir_a = bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "InstanceRole", "AIS A",
+            parent_id=scenario["id"], attributes={"represented_instance_id": act_ids[0]},
+        )
+        ir_b = bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "InstanceRole", "AIS B",
+            parent_id=scenario["id"], attributes={"represented_instance_id": act_ids[1]},
+        )
+        bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "SequenceMessage", "OAS Integration Message",
+            parent_id=scenario["id"], attributes={"source_id": ir_a["id"], "target_id": ir_b["id"]},
+        )
+
+        created = bridge.create_scenario_diagram("car_hmi/car_hmi.aird", scenario["id"], scenario_kind="OAS")
+        try:
+            assert created["node_count"] == 2
+            assert created["edge_count"] == 1
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if created["diagram_name"] in f]
+            assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])

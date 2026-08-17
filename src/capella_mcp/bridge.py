@@ -406,60 +406,12 @@ BREAKDOWN_DIAGRAMS = {
 # first place. Would need the underlying addon extended, out of reach from
 # this bridge.
 #
-# Also researched and still blocked (2026-08-16): the sequence/scenario
-# diagrams (Operational Interaction Scenario/"OES", Activity Interaction
-# Scenario/"OAS"), one layer deeper than ORB's blocker. Real progress this
-# round, but a real dead end too:
-#   - Confirmed via Sirius source (org.eclipse.sirius.diagram.sequence.
-#     description): InstanceRoleMapping extends NodeMapping, and
-#     MessageMapping (BasicMessageMapping's supertype) extends EdgeMapping.
-#     So, contrary to the earlier "zero primitive support anywhere"
-#     conclusion, DiagramServices.createNode()/createEdge() (the same fix
-#     used throughout this module) DO accept them directly via Java
-#     polymorphism -- verified live: creating a Scenario (owned by an
-#     OperationalCapability, capella.py's get_owned_scenarios()) with 2
-#     InstanceRoles (representedInstance set via raw EMF --
-#     python4capella has no setter, only the derived get_represented_
-#     instance() query) and calling createNode() with InstanceRoleMaping
-#     AIS succeeded cleanly, node_count=4, no exception.
-#   - export_diagram fails hard for it anyway, confirmed via Capella's
-#     native exportRepresentations app's own log (not silently blank like
-#     ContainerMapping used to be -- the file is never even written):
-#     `java.lang.NullPointerException: Cannot invoke "org.eclipse.sirius.
-#     diagram.sequence.business.internal.elements.ISequenceEvent.
-#     getVerticalRange()" because "from" is null`. This is Sirius's
-#     internal vertical-ordering computation for sequence diagrams
-#     (lifeline creation/message temporal order), a completely different
-#     mechanism from the x/y `notation:Bounds` every other diagram type in
-#     this module uses -- set_bounds() (which IS what's used in the live
-#     test above) does not establish whatever internal ordering state this
-#     computation expects.
-#   - SequenceDiagramServices.refreshOrdering(ddiagram) exists and sounds
-#     like the fix, but its entire body is
-#     `UIUtil.getInstance().refreshActiveDiagram(ddiagram)` -- UI-dependent,
-#     same class of no-op as the already-ruled-out
-#     Sirius.open_representation() (confirmed live: ran without error, did
-#     not change the export outcome).
-#   - SequenceDiagramServices' other ~30 public methods are exclusively
-#     ordering/validation/query helpers (validateOrdering, doReorder,
-#     allowMessageCreation -- a PRECONDITION check, not a creator) -- no
-#     equivalent to DiagramServices.createContainer/createNode/createEdge
-#     exists for this diagram family anywhere searched.
-#   - Separately, even the semantic model side is harder than everything
-#     else in this module: SequenceMessage has no settable source/target
-#     at all in capella.py, only derived getters
-#     (get_sending_instance_role()/get_receiving_instance_role(), backed by
-#     getSendingPart()/getReceivingPart() -- MessageEnd objects positioned
-#     in the scenario's interaction-fragment order, not a simple 2-field
-#     relationship like OCB's involvement edge was).
-# Conclusion: reachable in principle (the mapping-type compatibility is
-# real), but blocked by an internal Sirius computation with no found public
-# entry point to satisfy it headless, on top of a harder semantic-model
-# side than any diagram already implemented here. Not attempted further --
-# next step, if ever revisited, would be the same live-JDWP-debugger
-# approach that found the ContainerMapping fix, aimed at
-# ISequenceEvent.getVerticalRange()'s actual callers, not another attempt
-# from this bridge's abstraction level.
+# Sequence/scenario diagrams (Operational Interaction Scenario/"OES",
+# Activity Interaction Scenario/"OAS") -- RESOLVED (2026-08-17) after two
+# earlier rounds concluded "blocked, no found public entry point". See the
+# comment above _SCENARIO_DIAGRAM_MAPPINGS/create_scenario_diagram() further
+# down this module for the full root-cause investigation and fix (both the
+# export-time Sirius internal NPE and the semantic-model construction).
 CONTAINER_DIAGRAMS = {
     ("oa", "OperationalEntity"): {
         "diagram": "Operational Entity Blank",
@@ -808,8 +760,9 @@ def create_element(
                 # get_owned_logical_components() (nesting). LogicalComponent,
                 # SystemFunction, LogicalFunction, OperationalActivity,
                 # OperationalActor, OperationalEntity, OperationalCapability,
-                # StateMachine, Region, State, Mode, DataPkg, Class, and
-                # FunctionalExchange have all been validated against a real
+                # StateMachine, Region, State, Mode, DataPkg, Class,
+                # FunctionalExchange, Scenario, InstanceRole, and
+                # SequenceMessage have all been validated against a real
                 # model this way. Other
                 # layer/type combinations still need their own container
                 # resolved the same way before create_element will actually
@@ -1025,6 +978,139 @@ def create_element(
                     el.set_source_port(out_port)
                     el.set_target_port(in_port)
                     container.get_owned_functional_exchanges().add(el)
+                elif {type_name!r} == "Scenario":
+                    # No package-level root -- always owned by an existing
+                    # OperationalCapability (get_owned_scenarios(), on
+                    # AbstractCapability -- confirmed real in capella.py).
+                    if {parent_id!r} is None:
+                        raise ValueError("Scenario requires parent_id (an existing OperationalCapability)")
+                    if not hasattr(container, "get_owned_scenarios"):
+                        raise AttributeError(
+                            "no get_owned_scenarios() found on "
+                            f"{{type(container).__name__}} (parent_id must be an OperationalCapability)"
+                        )
+                    container.get_owned_scenarios().add(el)
+                elif {type_name!r} == "InstanceRole":
+                    # Owned by a Scenario. representedInstance wants an
+                    # AbstractInstance (a Part), NOT the Entity/Function
+                    # itself -- Entity doesn't implement AbstractInstance
+                    # (confirmed: direct setRepresentedInstance(entity) call
+                    # raises ClassCastException). Every Entity/Component has
+                    # its own self-representing Part, lazily created on
+                    # first use via CapellaServices.creationService() and
+                    # exposed via getAbstractTypedElements() -- mirrors the
+                    # odesign's own InstanceRoleCreationTool operation
+                    # (`component.abstractTypedElements->at(1)`). Also,
+                    # Py4J can't resolve setRepresentedInstance's overload
+                    # (interface-typed parameter vs a concrete arg class --
+                    # same class of issue as several other setters in this
+                    # module) -- set via raw EMF eSet() instead.
+                    if {parent_id!r} is None:
+                        raise ValueError("InstanceRole requires parent_id (an existing Scenario)")
+                    if not hasattr(container, "get_owned_instance_roles"):
+                        raise AttributeError(
+                            "no get_owned_instance_roles() found on "
+                            f"{{type(container).__name__}} (parent_id must be a Scenario)"
+                        )
+                    attrs = {attributes!r} or {{}}
+                    represented_id = attrs.get("represented_instance_id")
+                    if not represented_id:
+                        raise ValueError(
+                            "InstanceRole requires attributes={{'represented_instance_id': ...}} "
+                            "(element id of an existing Entity/Function to represent)"
+                        )
+                    represented = None
+                    for candidate in layer_obj.get_all_contents() if hasattr(layer_obj, "get_all_contents") else []:
+                        if _element_id(candidate) == represented_id:
+                            represented = candidate
+                            break
+                    if represented is None:
+                        raise ValueError(f"represented_instance_id not found in layer: {{represented_id}}")
+                    # AbstractFunction (OperationalActivity/SystemFunction/
+                    # LogicalFunction's common ancestor) directly extends
+                    # Information.ecore's AbstractInstance -- confirmed in
+                    # FunctionalAnalysis.ecore's own eSuperTypes list --
+                    # unlike Entity, which doesn't. The odesign's own
+                    # InstanceRoleCreationTool operations confirm both
+                    # shapes: OES's "component"/"actor" tools set
+                    # representedInstance to `component.abstractTypedElements
+                    # ->at(1)` (the Part), OAS's "activity" tool sets it
+                    # directly to `component` (the Function itself, no
+                    # indirection). Try the direct (Function) case first,
+                    # fall back to the Part-indirection (Entity) case on
+                    # ClassCastException -- avoids hardcoding a type check
+                    # that would need updating for every future represented
+                    # type (Actor, Role, ...).
+                    feature = el.get_java_object().eClass().getEStructuralFeature("representedInstance")
+                    try:
+                        el.get_java_object().eSet(feature, represented.get_java_object())
+                    except Exception:
+                        capella_services = org.polarsys.capella.core.sirius.analysis.CapellaServices.getService()
+                        capella_services.creationService(represented.get_java_object())
+                        part = represented.get_java_object().getAbstractTypedElements().get(0)
+                        el.get_java_object().eSet(feature, part)
+                    container.get_owned_instance_roles().add(el)
+                elif {type_name!r} == "SequenceMessage":
+                    # The most complex branch here -- a SequenceMessage has
+                    # no simple settable source/target. Real shape (per
+                    # Interaction.ecore): Scenario.ownedEvents holds
+                    # EventSentOperation/EventReceiptOperation;
+                    # Scenario.ownedInteractionFragments holds a MessageEnd
+                    # pair (list order = semantic temporal order); each
+                    # MessageEnd.event points at its Event,
+                    # MessageEnd.coveredInstanceRoles (real, required) at
+                    # its InstanceRole. None of EventSentOperation/
+                    # EventReceiptOperation/MessageEnd have a capella.py
+                    # wrapper class -- built via EMF_API.py's
+                    # create_e_object(), the same primitive capella.py's
+                    # own constructors use internally.
+                    if {parent_id!r} is None:
+                        raise ValueError("SequenceMessage requires parent_id (an existing Scenario)")
+                    if not hasattr(container, "get_owned_messages"):
+                        raise AttributeError(
+                            "no get_owned_messages() found on "
+                            f"{{type(container).__name__}} (parent_id must be a Scenario)"
+                        )
+                    attrs = {attributes!r} or {{}}
+                    source_id = attrs.get("source_id")
+                    target_id = attrs.get("target_id")
+                    kind = attrs.get("kind", "SYNCHRONOUS_CALL")
+                    if not source_id or not target_id:
+                        raise ValueError(
+                            "SequenceMessage requires attributes={{'source_id': ..., 'target_id': ...}} "
+                            "(element ids of two existing InstanceRoles in the same Scenario)"
+                        )
+                    source_ir = target_ir = None
+                    for candidate in layer_obj.get_all_contents() if hasattr(layer_obj, "get_all_contents") else []:
+                        cid = _element_id(candidate)
+                        if cid == source_id:
+                            source_ir = candidate
+                        if cid == target_id:
+                            target_ir = candidate
+                    if source_ir is None:
+                        raise ValueError(f"source_id not found in layer: {{source_id}}")
+                    if target_ir is None:
+                        raise ValueError(f"target_id not found in layer: {{target_id}}")
+
+                    ns = "http://www.polarsys.org/capella/core/interaction/" + capella_version()
+                    send_event = create_e_object(ns, "EventSentOperation")
+                    container.get_java_object().getOwnedEvents().add(send_event)
+                    recv_event = create_e_object(ns, "EventReceiptOperation")
+                    container.get_java_object().getOwnedEvents().add(recv_event)
+
+                    send_end = create_e_object(ns, "MessageEnd")
+                    send_end.setEvent(send_event)
+                    send_end.getCoveredInstanceRoles().add(source_ir.get_java_object())
+                    recv_end = create_e_object(ns, "MessageEnd")
+                    recv_end.setEvent(recv_event)
+                    recv_end.getCoveredInstanceRoles().add(target_ir.get_java_object())
+                    container.get_java_object().getOwnedInteractionFragments().add(send_end)
+                    container.get_java_object().getOwnedInteractionFragments().add(recv_end)
+
+                    el.get_java_object().setKind(get_enum_literal(ns, "MessageKind", kind))
+                    el.get_java_object().setSendingEnd(send_end)
+                    el.get_java_object().setReceivingEnd(recv_end)
+                    container.get_owned_messages().add(el)
                 else:
                     container.get_contents().append(el)
                 model.commit_transaction()
@@ -2038,6 +2124,286 @@ def create_capability_diagram(model_path: str, diagram_name: str | None = None) 
         "diagram_name": pass2["diagram_name"],
         "node_count": pass2["node_count"],
         "edge_count": edge_count,
+    }
+
+
+# Sequence/scenario diagrams (OES "Operational Interaction Scenario", OAS
+# "Activity Interaction Scenario"). RESOLVED (2026-08-17), after two earlier
+# rounds concluded "blocked, no found public entry point" (see git history
+# for the prior version of this comment) -- the semantic-side blockers
+# (InstanceRole.representedInstance, SequenceMessage construction) and the
+# export-side NPE both have concrete, headless-callable fixes now:
+#
+#   - InstanceRole.representedInstance wants an AbstractInstance, but which
+#     concrete type varies: OES's "component"/"actor" tools represent an
+#     Entity, which does NOT implement AbstractInstance itself (confirmed
+#     live: direct eSet(representedInstance, entity) raises
+#     ClassCastException) -- every Entity/Component instead has its own
+#     self-representing Part, lazily created via
+#     org.polarsys.capella.core.sirius.analysis.CapellaServices.getService()
+#     .creationService(entity) and exposed via entity.getAbstractTypedElements()
+#     (mirrors the odesign's own operation, `component.abstractTypedElements
+#     ->at(1)`). OAS's "activity" tool, in contrast, sets representedInstance
+#     directly to the OperationalActivity itself (odesign: `component`, no
+#     indirection) -- AbstractFunction (OperationalActivity/SystemFunction/
+#     LogicalFunction's common ancestor) directly extends Information.ecore's
+#     AbstractInstance in its own eSuperTypes list, unlike Entity.
+#     create_element()'s InstanceRole branch tries the direct eSet() first
+#     and falls back to the Part-indirection path on ClassCastException,
+#     rather than hardcoding a type check. Also, Py4J can't resolve
+#     setRepresentedInstance's overload (interface-typed parameter vs a
+#     concrete arg class) either way -- set via raw EMF eSet(), not the
+#     named setter.
+#
+#   - SequenceMessage construction: no simple settable source/target: build
+#     a real EventSentOperation/EventReceiptOperation pair
+#     (Scenario.ownedEvents) and a MessageEnd pair (Scenario.
+#     ownedInteractionFragments, list order = semantic temporal order),
+#     wired via SequenceMessage.sendingEnd/receivingEnd. None of these three
+#     types have a capella.py wrapper -- built via EMF_API.py's
+#     create_e_object(), the same primitive capella.py's own constructors
+#     use internally. See create_element()'s SequenceMessage branch. To read
+#     the InstanceRole back out of an existing message/end, use
+#     MessageEnd.getCoveredInstanceRoles() (raw EMF) -- capella.py's own
+#     SequenceMessage.get_sending_instance_role()/get_receiving_instance_role()
+#     are misleadingly named: despite the name they resolve all the way
+#     through to the represented Entity/Function (Interaction.ecore's own
+#     derived-feature annotation: `sendingEnd.covered.representedInstance`),
+#     not the InstanceRole itself (confirmed live: their returned id matched
+#     the represented Entity's id, not the InstanceRole's).
+#
+#   - The export-time NPE (`Cannot invoke ISequenceEvent.getVerticalRange()
+#     because "from" is null`) is Sirius's own internal vertical-ordering
+#     computation for sequence diagrams (EventEnd/Lifeline bookkeeping,
+#     a completely different mechanism from every other diagram type in
+#     this module's x/y notation:Bounds). THE FIX: after creating
+#     InstanceRole/Message nodes and edges via the same
+#     DiagramServices.createNode()/createEdge() used throughout this
+#     module, explicitly run Sirius's own ordering-repair chain that
+#     normally fires automatically on interactive edits but doesn't survive
+#     a raw-API-only creation:
+#       1. org.eclipse.sirius.business.api.dialect.DialectManager.INSTANCE
+#          .refresh(java_diag, monitor) -- materializes Sirius's
+#          synchronized bordered "default execution" child node under each
+#          InstanceRole's DNode (synchronizationLock="true" in the odesign),
+#          which BasicMessageMapping's sourceMapping/targetMapping actually
+#          point at, not InstanceRoleMapping itself (confirmed in oa.odesign).
+#       2. org.eclipse.sirius.diagram.sequence.business.internal.refresh.
+#          RefreshLayoutCommand(editingDomain, gmfDiagram, true), executed
+#          via editingDomain.getCommandStack().execute(cmd) -- a plain
+#          org.eclipse.emf.transaction.RecordingCommand, headless-safe, no
+#          UI dependency. Its constructor's 2nd argument is the GMF
+#          notation Diagram, NOT the Sirius DDiagram itself (they're
+#          different EMF models -- confirmed live via ClassCastException
+#          when passing java_diag directly); resolve it via
+#          org.eclipse.sirius.diagram.ui.business.api.view.SiriusGMFHelper
+#          .getGmfDiagram(java_diag, session). Constructed via raw
+#          java.lang.reflect.Constructor.newInstance() (bundle.loadClass()
+#          for a real java.lang.Class, then Array.newInstance() for a real
+#          Object[] -- both regular constructor calls and Python-list
+#          arguments hit the same Py4J interface-typed-parameter overload
+#          resolution failure seen elsewhere in this module).
+#   Confirmed live: this whole sequence must run in a SEPARATE headless
+#   process from the one that created the nodes/edges -- the bordered
+#   "default execution" nodes above only materialize after a save+reopen
+#   cycle (same "GMF notation Views only materialize after save+reopen"
+#   constraint as every other multi-pass diagram function in this module),
+#   so create_scenario_diagram() below is 2-pass: pass 1 creates the
+#   representation + InstanceRole nodes only; pass 2 (reopen) creates
+#   Message edges (now that border nodes exist to target) and runs the
+#   ordering-repair chain once, right before the final save.
+_SCENARIO_DIAGRAM_MAPPINGS = {
+    "OES": {
+        "diagram": "Operational Interaction Scenario",
+        "instance_role_mapping": "Instancerole Mapping OA",
+        "message_mapping": "Basic message mapping OA",
+    },
+    "OAS": {
+        "diagram": "Activity Interaction Scenario",
+        "instance_role_mapping": "InstanceRoleMaping AIS",  # sic, Capella's own typo
+        "message_mapping": "Basic message mapping AIS",
+    },
+}
+
+
+def create_scenario_diagram(
+    model_path: str, scenario_id: str, scenario_kind: str = "OES", diagram_name: str | None = None
+) -> dict:
+    """Create a real Capella (Sirius) sequence/scenario diagram (OES
+    "Operational Interaction Scenario" or OAS "Activity Interaction
+    Scenario") for an existing Scenario and save the model.
+
+    scenario_id must be an existing Scenario (build one, its InstanceRoles,
+    and its SequenceMessages first via create_element -- see that
+    function's docstring). scenario_kind selects which of the two OA-layer
+    scenario diagram descriptions to use ("OES" or "OAS").
+    """
+    if scenario_kind not in _SCENARIO_DIAGRAM_MAPPINGS:
+        raise BridgeError(f"unknown scenario_kind {scenario_kind!r}, expected 'OES' or 'OAS'")
+    mapping_cfg = _SCENARIO_DIAGRAM_MAPPINGS[scenario_kind]
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+
+    pass1_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            se = model.get_system_engineering()
+            oa = se.get_operational_analysis()
+
+            scenario = None
+            for candidate in oa.get_all_contents() if hasattr(oa, "get_all_contents") else []:
+                if _element_id(candidate) == {scenario_id!r}:
+                    scenario = candidate
+                    break
+            if scenario is None:
+                raise ValueError(f"scenario_id not found in oa layer: {scenario_id!r}")
+
+            repDef = get_representation_definition_by_name(model.session, {mapping_cfg["diagram"]!r})
+            if repDef is None:
+                raise ValueError("representation definition not found: {mapping_cfg["diagram"]}")
+            irMapping = get_representation_mapping_by_name(repDef, {mapping_cfg["instance_role_mapping"]!r})
+            if irMapping is None:
+                raise ValueError("mapping not found: {mapping_cfg["instance_role_mapping"]}")
+            resolved_diagram_name = {diagram_name!r} or f"{{{mapping_cfg["diagram"]!r}}} - {{scenario.get_label()}}"
+
+            model.start_transaction()
+            try:
+                java_diag = create_representation(model.session, scenario, repDef, resolved_diagram_name)
+                if java_diag is None:
+                    raise ValueError("createRepresentation returned None for {mapping_cfg["diagram"]}")
+
+                diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+                node_count = 0
+                for ir in scenario.get_owned_instance_roles():
+                    diagram_services.createNode(irMapping, ir.get_java_object(), java_diag, java_diag)
+                    node_count += 1
+
+                monitor = org.eclipse.core.runtime.NullProgressMonitor()
+                org.eclipse.sirius.business.api.dialect.DialectManager.INSTANCE.refresh(java_diag, monitor)
+
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{"diagram_name": resolved_diagram_name, "node_count": node_count}})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass1 = _run_script(pass1_body)
+    resolved_diagram_name = pass1["diagram_name"]
+    node_count = pass1["node_count"]
+
+    pass2_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            se = model.get_system_engineering()
+            oa = se.get_operational_analysis()
+
+            scenario = None
+            for candidate in oa.get_all_contents() if hasattr(oa, "get_all_contents") else []:
+                if _element_id(candidate) == {scenario_id!r}:
+                    scenario = candidate
+                    break
+            if scenario is None:
+                raise ValueError(f"scenario_id not found in oa layer: {scenario_id!r}")
+
+            target = None
+            for d in model.get_all_diagrams():
+                if d.get_name() == {resolved_diagram_name!r}:
+                    target = d
+                    break
+            if target is None:
+                raise ValueError(f"diagram not found after pass 1: {resolved_diagram_name!r}")
+            java_diag = target.get_java_object().getRepresentation()
+
+            dnode_by_ir_id = {{}}
+            for de in java_diag.getOwnedDiagramElements():
+                if de.eClass().getName() == "DNode":
+                    dnode_by_ir_id[de.getTarget().getId()] = de
+
+            repDef = get_representation_definition_by_name(model.session, {mapping_cfg["diagram"]!r})
+            msgMapping = get_representation_mapping_by_name(repDef, {mapping_cfg["message_mapping"]!r})
+            if msgMapping is None:
+                raise ValueError("mapping not found: {mapping_cfg["message_mapping"]}")
+            diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+
+            model.start_transaction()
+            try:
+                edge_count = 0
+                for msg in scenario.get_owned_messages():
+                    # NOTE: msg.get_sending_instance_role()/
+                    # get_receiving_instance_role() do NOT return the
+                    # InstanceRole despite the name -- they resolve all the
+                    # way through to the represented Entity/Part (matches
+                    # Interaction.ecore's own derived-feature annotation:
+                    # `sendingEnd.covered.representedInstance`). The real
+                    # InstanceRole is MessageEnd.coveredInstanceRoles
+                    # (confirmed live) -- read it via raw EMF instead.
+                    send_end = msg.get_java_object().getSendingEnd()
+                    recv_end = msg.get_java_object().getReceivingEnd()
+                    if send_end is None or recv_end is None:
+                        continue
+                    send_covered = send_end.getCoveredInstanceRoles()
+                    recv_covered = recv_end.getCoveredInstanceRoles()
+                    if send_covered.size() == 0 or recv_covered.size() == 0:
+                        continue
+                    src_dnode = dnode_by_ir_id.get(send_covered.get(0).getId())
+                    tgt_dnode = dnode_by_ir_id.get(recv_covered.get(0).getId())
+                    if src_dnode is None or tgt_dnode is None:
+                        continue
+                    src_border = src_dnode.getOwnedBorderedNodes()
+                    tgt_border = tgt_dnode.getOwnedBorderedNodes()
+                    src_node = src_border.get(0) if src_border.size() > 0 else src_dnode
+                    tgt_node = tgt_border.get(0) if tgt_border.size() > 0 else tgt_dnode
+                    diagram_services.createEdge(msgMapping, src_node, tgt_node, msg.get_java_object())
+                    edge_count += 1
+
+                monitor = org.eclipse.core.runtime.NullProgressMonitor()
+                org.eclipse.sirius.business.api.dialect.DialectManager.INSTANCE.refresh(java_diag, monitor)
+
+                editing_domain = model.session.getTransactionalEditingDomain()
+                sequence_bundle = org.eclipse.core.runtime.Platform.getBundle("org.eclipse.sirius.diagram.sequence")
+                RefreshLayoutCommandClass = sequence_bundle.loadClass(
+                    "org.eclipse.sirius.diagram.sequence.business.internal.refresh.RefreshLayoutCommand")
+                ctor = None
+                for candidate in RefreshLayoutCommandClass.getDeclaredConstructors():
+                    if candidate.getParameterCount() == 3:
+                        ctor = candidate
+                        break
+                ctor.setAccessible(True)
+                gmf_diagram = org.eclipse.sirius.diagram.ui.business.api.view.SiriusGMFHelper.getGmfDiagram(java_diag, model.session)
+                object_class = sequence_bundle.loadClass("java.lang.Object")
+                ctor_args = java.lang.reflect.Array.newInstance(object_class, 3)
+                java.lang.reflect.Array.set(ctor_args, 0, editing_domain)
+                java.lang.reflect.Array.set(ctor_args, 1, gmf_diagram)
+                java.lang.reflect.Array.set(ctor_args, 2, java.lang.Boolean(True))
+                refresh_cmd = ctor.newInstance(ctor_args)
+                editing_domain.getCommandStack().execute(refresh_cmd)
+
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            _write_result({{
+                "diagram_uid": target.get_uid(),
+                "diagram_name": target.get_name(),
+                "edge_count": edge_count,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass2 = _run_script(pass2_body)
+    return {
+        "diagram_uid": pass2["diagram_uid"],
+        "diagram_name": pass2["diagram_name"],
+        "node_count": node_count,
+        "edge_count": pass2["edge_count"],
     }
 
 

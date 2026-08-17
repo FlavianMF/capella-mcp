@@ -83,6 +83,14 @@ Tools (ações, leitura + escrita):
   — Operational Capabilities Blank (OCB), só camada OA; entidades como
   container + capacidades envolvidas aninhadas; mesmo fix, PNG renderiza
   corretamente
+- `create_scenario_diagram(model_path, scenario_id, scenario_kind="OES", diagram_name=None)`
+  — diagramas de sequência/cenário (Sirius `SequenceDiagramDescription`):
+  OES "Operational Interaction Scenario" e OAS "Activity Interaction
+  Scenario", só camada OA; requer um `Scenario` existente (com
+  `InstanceRole`s e `SequenceMessage`s já criados via `create_element`);
+  PNG renderiza corretamente headless — fix diferente de todo o resto
+  (chain de reparo de ordering do próprio Sirius, ver comentário de
+  `_SCENARIO_DIAGRAM_MAPPINGS`/`create_scenario_diagram` em `bridge.py`)
 - `delete_diagram(model_path, diagram_uid)`
 - `export_diagram(model_path, image_format="PNG")`
 

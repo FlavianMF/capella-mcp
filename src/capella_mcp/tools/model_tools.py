@@ -63,9 +63,17 @@ def register(mcp: MCPServer) -> None:
         element ids of two existing Functions of the same kind as the
         layer, e.g. two OperationalActivity ids for layer="oa" -- a
         FunctionOutputPort/FunctionInputPort pair is created on them and
-        wired to the exchange automatically). Any other type_name silently
-        fails to persist -- the call returns success with a valid id, but
-        the element never actually appears in the model on a later call.
+        wired to the exchange automatically), Scenario (parent_id = an
+        existing OperationalCapability), InstanceRole (parent_id = an
+        existing Scenario; attributes must include represented_instance_id,
+        the element id of an existing Entity/Actor/Function to represent),
+        SequenceMessage (parent_id = an existing Scenario; attributes must
+        include source_id/target_id, the element ids of two existing
+        InstanceRoles in that Scenario, and may include kind --
+        "SYNCHRONOUS_CALL" (default) or "ASYNCHRONOUS_CALL"). Any other
+        type_name silently fails to persist -- the call returns success
+        with a valid id, but the element never actually appears in the
+        model on a later call.
         """
         return bridge.create_element(model_path, layer, type_name, name, parent_id, attributes)
 
@@ -176,6 +184,29 @@ def register(mcp: MCPServer) -> None:
         investigation and fix).
         """
         return bridge.create_capability_diagram(model_path, diagram_name)
+
+    @mcp.tool()
+    def create_scenario_diagram(
+        model_path: str, scenario_id: str, scenario_kind: str = "OES", diagram_name: str | None = None
+    ) -> dict:
+        """Create a real Capella (Sirius) sequence/scenario diagram and save
+        the model -- OES ("Operational Interaction Scenario") or OAS
+        ("Activity Interaction Scenario"), OA-layer only.
+
+        scenario_id must be an existing Scenario -- build it, its
+        InstanceRoles, and its SequenceMessages first via create_element
+        (see that tool's docstring). scenario_kind is "OES" (default,
+        InstanceRoles represent Entities/Actors) or "OAS" (InstanceRoles
+        represent OperationalActivities).
+
+        Renders correctly in export_diagram's headless PNG (see the
+        _SCENARIO_DIAGRAM_MAPPINGS/create_scenario_diagram comment in
+        bridge.py for the root-cause investigation and fix -- this diagram
+        family needed a different fix than every other diagram type in this
+        module, an explicit re-run of Sirius's own sequence-diagram
+        ordering-repair chain).
+        """
+        return bridge.create_scenario_diagram(model_path, scenario_id, scenario_kind, diagram_name)
 
     @mcp.tool()
     def delete_diagram(model_path: str, diagram_uid: str) -> dict:

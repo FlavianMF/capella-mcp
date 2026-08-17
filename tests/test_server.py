@@ -19,6 +19,7 @@ def test_all_v1_tools_registered():
         "create_container_diagram",
         "create_class_diagram",
         "create_capability_diagram",
+        "create_scenario_diagram",
         "delete_diagram",
         "export_diagram",
     }
