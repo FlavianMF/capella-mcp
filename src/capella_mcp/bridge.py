@@ -2596,6 +2596,32 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
                     RequestCls = ui_bundle.loadClass(
                         "org.eclipse.gmf.runtime.diagram.ui.requests.ArrangeRequest")
 
+                    # Every varargs-accepting reflection call below
+                    # (Constructor.newInstance(Object...), Method.invoke(Object,
+                    # Object...), Class.getMethod(String, Class<?>...)) needs a
+                    # REAL Java array, not a Python list -- Py4J converts a
+                    # Python list to a java.util.ArrayList, and Py4J's overload
+                    # resolution can't match that against a varargs Object[]/
+                    # Class[] parameter (confirmed live: `Method newInstance
+                    # ([class java.util.ArrayList]) does not exist`, the exact
+                    # class of issue already fixed for RefreshLayoutCommand's
+                    # constructor call above -- a zero-arg call is fine passing
+                    # None/no python args at all; only 1+-arg calls need this).
+                    object_class = ui_bundle.loadClass("java.lang.Object")
+                    class_class = ui_bundle.loadClass("java.lang.Class")
+
+                    def _object_array(items):
+                        arr = java.lang.reflect.Array.newInstance(object_class, len(items))
+                        for i, item in enumerate(items):
+                            java.lang.reflect.Array.set(arr, i, item)
+                        return arr
+
+                    def _class_array(items):
+                        arr = java.lang.reflect.Array.newInstance(class_class, len(items))
+                        for i, item in enumerate(items):
+                            java.lang.reflect.Array.set(arr, i, item)
+                        return arr
+
                     # --- OffscreenEditPartFactory singleton ---
                     factory = FactoryCls.getMethod("getInstance", None).invoke(None, None)
 
@@ -2610,13 +2636,13 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
                         _write_result({{"error": "cannot find Shell(Display) constructor"}})
                     else:
                         shell_ctor.setAccessible(True)
-                        shell = shell_ctor.newInstance([display])
+                        shell = shell_ctor.newInstance(_object_array([display]))
 
                         # --- create DiagramEditPart offscreen ---
                         create_m = FactoryCls.getMethod(
                             "createDiagramEditPart",
-                            [gmf_diagram.getClass(), ShellCls])
-                        diagram_ep = create_m.invoke(factory, [gmf_diagram, shell])
+                            _class_array([gmf_diagram.getClass(), ShellCls]))
+                        diagram_ep = create_m.invoke(factory, _object_array([gmf_diagram, shell]))
 
                         if diagram_ep is None:
                             _write_result({{"error": "OffscreenEditPartFactory returned null -- diagram may not support headless layout"}})
@@ -2632,7 +2658,7 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
                                 _write_result({{"error": "cannot find ArrangeRequest constructor"}})
                             else:
                                 req_ctor.setAccessible(True)
-                                request = req_ctor.newInstance(["ACTION_ARRANGE_ALL"])
+                                request = req_ctor.newInstance(_object_array(["ACTION_ARRANGE_ALL"]))
 
                                 parts = java.util.ArrayList()
                                 parts.add(diagram_ep)
