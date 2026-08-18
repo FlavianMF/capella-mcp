@@ -2544,14 +2544,38 @@ def delete_diagram(model_path: str, diagram_uid: str) -> dict:
 
 def layout_diagram(model_path: str, diagram_uid: str) -> dict:
     """Apply Capella's native 'Layout > All' to rearrange all elements in an
-    existing diagram.  Uses GMF's OffscreenEditPartFactory + ArrangeRequest
-    (same code path as the UI 'Layout > All' menu action), so it respects
-    pinned elements, registered layout providers, and all Sirius layout rules.
+    existing diagram, via GMF's OffscreenEditPartFactory + ArrangeRequest
+    (the same code path the UI 'Layout > All' menu action uses).
 
-    Works for all diagram types: breakdown, container, class, capability, and
-    scenario diagrams.  Falls back to ``_layout_tree`` when the Sirius/GMF
-    layout pipeline is unavailable (e.g. a mapping without a registered
-    LayoutProvider).
+    STATUS (2026-08-17): several Py4J reflection bugs reported live against
+    real diagrams (peer agent, trakking_test session) are fixed --
+    Constructor.newInstance()/Method.invoke()/Class.getMethod() all need a
+    real Java array for their varargs parameter, not a Python list (Py4J
+    converts a list to java.util.ArrayList, which fails overload
+    resolution); Shell's constructor lookup needs to match on parameter
+    TYPE, not just count (SWT's Shell has 3 different 1-arg constructors);
+    createDiagramEditPart's Class.getMethod() lookup needs the DECLARED
+    interface type (org.eclipse.gmf.runtime.notation.Diagram), not the
+    concrete runtime class Class.getMethod() would otherwise reject with
+    NoSuchMethodException. All of the above are confirmed fixed live --
+    the tool now gets all the way to requesting the arrange command.
+
+    REMAINING KNOWN ISSUE, not yet fixed: `diagram_ep.getCommand(request)`
+    returns null for every diagram type tried (both a sequence/OES diagram
+    and a plain ContainerMapping diagram) -- confirmed live this isn't
+    scenario-diagram-specific. Calling `diagram_ep.activate()` before
+    requesting the command doesn't change the outcome either (confirmed
+    live). Working theory, not yet verified: an EditPart created via
+    OffscreenEditPartFactory alone (no real EditPartViewer/EditDomain) may
+    not have enough context for Sirius's DDiagramEditPart's edit policies
+    to build an ArrangeRequest command -- GMF's offscreen-rendering APIs
+    are normally used for image EXPORT (a read-only walk), not for
+    building executable edit commands, which may need a real (even if
+    headless/offscreen) DiagramGraphicalViewer wired to an EditDomain. Not
+    investigated further yet -- next step, if revisited, would be tracing
+    what a real interactive 'Layout > All' invocation provides that this
+    bare offscreen EditPart doesn't (live JDWP on DDiagramEditPart's edit
+    policies, same methodology used elsewhere in this module).
 
     Returns ``{"success": True, "diagram_uid": ..., "diagram_name": ...}`` on
     success.  On failure, raises BridgeError with a descriptive message --
@@ -2627,9 +2651,19 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
 
                     # --- SWT Display + hidden Shell (Xvfb provides the Display) ---
                     display = DisplayCls.getMethod("getDefault", None).invoke(None, None)
+                    # SWT's Shell has several 1-arg constructors --
+                    # Shell(Display) AND Shell(Shell parent), at least --
+                    # matching on parameter COUNT alone picks whichever one
+                    # getDeclaredConstructors() happens to list first (not
+                    # declaration order), which is not guaranteed to be the
+                    # Display one (confirmed live: ClassCastException,
+                    # "Cannot cast Display to Shell", from newInstance()
+                    # actually receiving Shell(Shell parent) with a Display
+                    # argument). Match on the parameter's actual type too.
                     shell_ctor = None
                     for c in ShellCls.getDeclaredConstructors():
-                        if c.getParameterCount() == 1:
+                        param_types = c.getParameterTypes()
+                        if len(param_types) == 1 and param_types[0].getName() == DisplayCls.getName():
                             shell_ctor = c
                             break
                     if shell_ctor is None:
@@ -2639,9 +2673,21 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
                         shell = shell_ctor.newInstance(_object_array([display]))
 
                         # --- create DiagramEditPart offscreen ---
+                        # Class.getMethod() requires an EXACT parameter-type
+                        # match, no polymorphism -- gmf_diagram.getClass()
+                        # returns the concrete runtime class (DiagramImpl),
+                        # but the method is declared taking the interface
+                        # (org.eclipse.gmf.runtime.notation.Diagram), so
+                        # looking it up by the concrete class fails with
+                        # NoSuchMethodException (confirmed live). Load the
+                        # declared interface type instead.
+                        notation_bundle = org.eclipse.core.runtime.Platform.getBundle(
+                            "org.eclipse.gmf.runtime.notation")
+                        NotationDiagramCls = notation_bundle.loadClass(
+                            "org.eclipse.gmf.runtime.notation.Diagram")
                         create_m = FactoryCls.getMethod(
                             "createDiagramEditPart",
-                            _class_array([gmf_diagram.getClass(), ShellCls]))
+                            _class_array([NotationDiagramCls, ShellCls]))
                         diagram_ep = create_m.invoke(factory, _object_array([gmf_diagram, shell]))
 
                         if diagram_ep is None:
