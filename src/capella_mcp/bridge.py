@@ -2547,35 +2547,58 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
     existing diagram, via GMF's OffscreenEditPartFactory + ArrangeRequest
     (the same code path the UI 'Layout > All' menu action uses).
 
-    STATUS (2026-08-17): several Py4J reflection bugs reported live against
-    real diagrams (peer agent, trakking_test session) are fixed --
-    Constructor.newInstance()/Method.invoke()/Class.getMethod() all need a
-    real Java array for their varargs parameter, not a Python list (Py4J
-    converts a list to java.util.ArrayList, which fails overload
-    resolution); Shell's constructor lookup needs to match on parameter
-    TYPE, not just count (SWT's Shell has 3 different 1-arg constructors);
-    createDiagramEditPart's Class.getMethod() lookup needs the DECLARED
-    interface type (org.eclipse.gmf.runtime.notation.Diagram), not the
-    concrete runtime class Class.getMethod() would otherwise reject with
-    NoSuchMethodException. All of the above are confirmed fixed live --
-    the tool now gets all the way to requesting the arrange command.
+    Three real bugs found and fixed live (2026-08-17/18) getting this
+    working, each confirmed by disassembling/reading the actual GMF/GEF/
+    Sirius source extracted from Capella's own plugin jars:
 
-    REMAINING KNOWN ISSUE, not yet fixed: `diagram_ep.getCommand(request)`
-    returns null for every diagram type tried (both a sequence/OES diagram
-    and a plain ContainerMapping diagram) -- confirmed live this isn't
-    scenario-diagram-specific. Calling `diagram_ep.activate()` before
-    requesting the command doesn't change the outcome either (confirmed
-    live). Working theory, not yet verified: an EditPart created via
-    OffscreenEditPartFactory alone (no real EditPartViewer/EditDomain) may
-    not have enough context for Sirius's DDiagramEditPart's edit policies
-    to build an ArrangeRequest command -- GMF's offscreen-rendering APIs
-    are normally used for image EXPORT (a read-only walk), not for
-    building executable edit commands, which may need a real (even if
-    headless/offscreen) DiagramGraphicalViewer wired to an EditDomain. Not
-    investigated further yet -- next step, if revisited, would be tracing
-    what a real interactive 'Layout > All' invocation provides that this
-    bare offscreen EditPart doesn't (live JDWP on DDiagramEditPart's edit
-    policies, same methodology used elsewhere in this module).
+    1. Every varargs-accepting reflection call (Constructor.newInstance(),
+       Method.invoke(), Class.getMethod()) needs a real Java array for its
+       varargs parameter, not a Python list -- Py4J converts a list to
+       java.util.ArrayList, which fails overload resolution (same class of
+       issue as RefreshLayoutCommand's constructor call in
+       create_scenario_diagram; a zero-arg call is fine passing None/no
+       python args at all, only 1+-arg calls need this).
+    2. Shell's constructor lookup must match on parameter TYPE, not just
+       count -- SWT's Shell has 3 different 1-arg constructors
+       (Shell(int)/Shell(Display)/Shell(Shell)), and
+       getDeclaredConstructors()'s return order isn't declaration order.
+    3. createDiagramEditPart's Class.getMethod() lookup needs the DECLARED
+       interface type (org.eclipse.gmf.runtime.notation.Diagram), not
+       gmf_diagram.getClass() (the concrete runtime class, DiagramImpl) --
+       Class.getMethod() requires an exact match, no polymorphism.
+
+    A fourth, more subtle bug came after all three above were fixed and
+    `diagram_ep.getCommand(request)` still returned null cleanly (no
+    exception) for every diagram type tried: the ArrangeRequest was built
+    with the literal string "ACTION_ARRANGE_ALL" -- but that's the Java
+    *constant's source name*, not its actual runtime value. The real value
+    of org.eclipse.gmf.runtime.diagram.ui.actions.ActionIds.
+    ACTION_ARRANGE_ALL is "arrangeAllAction". Every type-dispatch check
+    downstream (AbstractEditPart.getCommand() -> each installed
+    EditPolicy, ultimately ContainerEditPolicy.getArrangeCommand()) does a
+    plain string .equals() against the request's type, so the wrong
+    literal never matched anything, the internal edit-parts-to-arrange
+    list stayed empty, and it fell through to a clean `return null` -- no
+    exception anywhere, diagram-type-independent, unaffected by calling
+    `.activate()` first (activation has nothing to do with a pure
+    string-equality dispatch miss). Confirmed against the real interactive
+    "Layout > All" action's own source (ArrangeAction.
+    createArrangeAllAction), which always builds
+    `new ArrangeRequest(ActionIds.ACTION_ARRANGE_ALL)` -- this function's
+    dispatch target (diagram_ep.getCommand(request),
+    partsToArrange=[diagram_ep]) is structurally identical to the real GUI
+    action's own "arrange all, blank canvas selected" path. Fixed by
+    reading the real constant reflectively off ActionIds
+    (getField("ACTION_ARRANGE_ALL").get(None)) instead of hardcoding a
+    string that could drift across GMF versions.
+
+    Also uses Sirius's own OffscreenEditPartFactory subclass
+    (org.eclipse.sirius.diagram.ui.tools.internal.part.
+    OffscreenEditPartFactory) rather than GMF's base one -- Sirius's own
+    class javadoc states this exists specifically because of "a problem in
+    the default DiagramGraphicalViewer" for Sirius diagrams (this
+    project's exact use case). That subclass drops the base class's final
+    deferred-update flush loop, replicated manually below.
 
     Returns ``{"success": True, "diagram_uid": ..., "diagram_name": ...}`` on
     success.  On failure, raises BridgeError with a descriptive message --
@@ -2611,8 +2634,15 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
                     # (same pattern as RefreshLayoutCommand in create_scenario_diagram)
                     ui_bundle = org.eclipse.core.runtime.Platform.getBundle(
                         "org.eclipse.gmf.runtime.diagram.ui")
-                    FactoryCls = ui_bundle.loadClass(
-                        "org.eclipse.gmf.runtime.diagram.ui.OffscreenEditPartFactory")
+                    # Sirius's OWN OffscreenEditPartFactory subclass (not
+                    # GMF's base one) -- its class javadoc explicitly says
+                    # it exists because of "a problem in the default
+                    # DiagramGraphicalViewer" for Sirius diagrams; it uses
+                    # SiriusDiagramGraphicalViewer instead.
+                    sirius_ui_bundle = org.eclipse.core.runtime.Platform.getBundle(
+                        "org.eclipse.sirius.diagram.ui")
+                    FactoryCls = sirius_ui_bundle.loadClass(
+                        "org.eclipse.sirius.diagram.ui.tools.internal.part.OffscreenEditPartFactory")
                     DisplayCls = ui_bundle.loadClass(
                         "org.eclipse.swt.widgets.Display")
                     ShellCls = ui_bundle.loadClass(
@@ -2690,10 +2720,45 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
                             _class_array([NotationDiagramCls, ShellCls]))
                         diagram_ep = create_m.invoke(factory, _object_array([gmf_diagram, shell]))
 
+                        # GMF's base OffscreenEditPartFactory ends its own
+                        # createDiagramEditPart() with a deferred-update
+                        # flush loop (`while (shell.getDisplay().
+                        # readAndDispatch()) {{}}`) to let the SWT/GEF event
+                        # queue settle before the edit part tree is
+                        # considered ready -- Sirius's own subclass (used
+                        # here instead, see the class comment above) drops
+                        # this loop, so replicate it manually.
+                        display_obj = shell.getDisplay()
+                        while display_obj.readAndDispatch():
+                            pass
+
                         if diagram_ep is None:
                             _write_result({{"error": "OffscreenEditPartFactory returned null -- diagram may not support headless layout"}})
                         else:
-                            # --- ArrangeRequest("ACTION_ARRANGE_ALL") ---
+                            # --- ArrangeRequest(ActionIds.ACTION_ARRANGE_ALL) ---
+                            # BUG, found and fixed 2026-08-18: the request
+                            # type must be the real runtime VALUE of the
+                            # ActionIds.ACTION_ARRANGE_ALL constant
+                            # ("arrangeAllAction"), not its Java source
+                            # identifier name ("ACTION_ARRANGE_ALL") --
+                            # every type-dispatch check downstream
+                            # (AbstractEditPart.getCommand() -> each
+                            # installed EditPolicy, ultimately
+                            # ContainerEditPolicy.getArrangeCommand())
+                            # compares the request's type via plain string
+                            # .equals(), so the wrong literal silently
+                            # matched nothing and getCommand() always
+                            # returned null (no exception, for every
+                            # diagram type, regardless of .activate()).
+                            # Read the real constant reflectively instead
+                            # of hardcoding a value that could drift across
+                            # GMF versions -- ActionIds is a Java interface,
+                            # so its `public final String` constants
+                            # compile to public static fields.
+                            ActionIdsCls = ui_bundle.loadClass(
+                                "org.eclipse.gmf.runtime.diagram.ui.actions.ActionIds")
+                            arrange_all_type = ActionIdsCls.getField("ACTION_ARRANGE_ALL").get(None)
+
                             # 1-arg ctor: layoutType defaults to null (= DEFAULT)
                             req_ctor = None
                             for c in RequestCls.getDeclaredConstructors():
@@ -2704,7 +2769,7 @@ def layout_diagram(model_path: str, diagram_uid: str) -> dict:
                                 _write_result({{"error": "cannot find ArrangeRequest constructor"}})
                             else:
                                 req_ctor.setAccessible(True)
-                                request = req_ctor.newInstance(_object_array(["ACTION_ARRANGE_ALL"]))
+                                request = req_ctor.newInstance(_object_array([arrange_all_type]))
 
                                 parts = java.util.ArrayList()
                                 parts.add(diagram_ep)

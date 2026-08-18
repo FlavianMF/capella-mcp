@@ -739,6 +739,36 @@ class TestLayoutDiagram:
         # error handling code is always present in the template; verify
         # the success-path key classes are there (already checked above).
 
+    def test_uses_sirius_offscreen_edit_part_factory(self, models_root, workspace_root, monkeypatch):
+        """Regression guard: must use Sirius's OWN OffscreenEditPartFactory
+        subclass (org.eclipse.sirius.diagram.ui.tools.internal.part), not
+        GMF's base one -- Sirius's own class javadoc states this exists
+        because of "a problem in the default DiagramGraphicalViewer" for
+        Sirius diagrams. Since that subclass drops the base class's own
+        deferred-update flush loop, the script must replicate it."""
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.layout_diagram("demo.aird", "uid-1")
+        script = captured["script"]
+        assert "org.eclipse.sirius.diagram.ui.tools.internal.part.OffscreenEditPartFactory" in script
+        assert "org.eclipse.sirius.diagram.ui" in script
+        assert "readAndDispatch" in script
+
+    def test_arrange_request_uses_real_action_ids_value(self, models_root, workspace_root, monkeypatch):
+        """Regression guard for the exact bug found and fixed 2026-08-18:
+        the request type must be the real runtime VALUE of ActionIds.
+        ACTION_ARRANGE_ALL ("arrangeAllAction"), read reflectively, not the
+        Java source identifier name ("ACTION_ARRANGE_ALL") passed directly
+        as the request-type string -- every downstream type-dispatch check
+        does a plain string .equals(), so the wrong literal silently
+        matched nothing and getCommand() always returned null (no
+        exception, for every diagram type, regardless of .activate())."""
+        captured = self._capture_and_compile(monkeypatch)
+        bridge.layout_diagram("demo.aird", "uid-1")
+        script = captured["script"]
+        assert "ActionIds" in script
+        assert 'getField("ACTION_ARRANGE_ALL")' in script
+        assert '_object_array(["ACTION_ARRANGE_ALL"])' not in script
+
     def test_diagram_not_found(self, models_root, workspace_root, monkeypatch):
         result = {"error": "diagram not found: nonexistent-uid"}
         captured = self._capture_and_compile(monkeypatch, result)
