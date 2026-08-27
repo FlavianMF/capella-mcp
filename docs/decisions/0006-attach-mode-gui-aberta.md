@@ -155,6 +155,52 @@ baseada em "tem algo não-salvo" bloquearia toda chamada seguinte para
 sempre. E o objetivo é justamente o MCP **trabalhar em cima** do que o
 usuário tem editado na tela, não recusar por causa disso.
 
+### Registro sem clicar em Preferences
+
+O passo manual "Script Locations > Add..." incomodava -- pesquisado se
+dava pra eliminar. `org.eclipse.ease.ui.scripts.preferences
+.PreferencesHelper.addLocation()` (bytecode inspecionado em
+`org.eclipse.ease.ui.scripts_0.8.0.*.jar`) só grava 3 linhas num
+preference store `InstanceScope` comum -- confirmado ao vivo (não
+suposição): rodei um script headless-descartável chamando essa API Java
+de verdade (`IRepositoryFactory.eINSTANCE.createScriptLocation()` +
+`PreferencesHelper.addLocation(loc)` + `node.flush()`) e li de volta o
+arquivo gerado:
+
+```
+eclipse.preferences.version=1
+file\:|home|...|src|capella_mcp/default=false
+file\:|home|...|src|capella_mcp/location=file\:/home/.../src/capella_mcp
+file\:|home|...|src|capella_mcp/recursive=false
+```
+
+em `<workspace>/.metadata/.plugins/org.eclipse.core.runtime/.settings/
+org.eclipse.ease.ui.scripts.prefs`. Encoding do node name: valor da URI
+com `:` escapado (`\:`, sintaxe de `.properties`) e `/` trocado por `|`
+(separador de node de preference não pode aparecer no nome do node).
+`scripts/register_attach_listener.py` reproduz esse mesmo arquivo
+diretamente (só I/O de arquivo, sem subir Capella) -- testado
+byte-a-byte idêntico ao gerado pela API real (`tests/
+test_register_attach_listener.py`).
+
+**Limite honesto dessa verificação:** confirmei o *formato* do arquivo
+ao vivo, mas não confirmei que uma entrada pré-semeada assim (sem nunca
+ter passado pela UI) é de fato tratada pelo EASE como uma Script
+Location válida numa **GUI interativa real** -- testei rodando Capella
+via `-appid org.eclipse.python4capella.commandline` (mesmo modo do
+bridge.py) com o arquivo pré-escrito, e `PreferencesHelper.getLocations()`
+voltou vazio mesmo. Isso é inconclusivo, não uma prova de que não
+funciona: a mesma chamada `getLocations()` também voltou vazia
+imediatamente depois de um `addLocation()`+`flush()` bem-sucedido, na
+mesma sessão -- sugere que `getLocations()` (ou o que popula seu cache
+interno, `RepositoryService`/`UpdateRepositoryJob`) depende de algum
+evento de lifecycle que o modo commandline headless não dispara (ex:
+`IStartup` do workbench de verdade), não necessariamente que o arquivo
+em si esteja errado. Documentado como caminho A (tente primeiro) com
+fallback pro clique manual (caminho B, sempre funciona) em
+`docs/architecture.md` -- sem afirmar "resolvido" além do que foi de
+fato verificado.
+
 ## Consequências
 
 - Leitura (`list_layers`/`list_elements`/`get_element`) e escrita

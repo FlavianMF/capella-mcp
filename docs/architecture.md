@@ -115,6 +115,35 @@ Resources adicionais (diagramas):
 Opcional, só faz sentido rodando o Capella GUI localmente (não em
 Docker/CI). Ver [[0006-attach-mode-gui-aberta]] pro design completo.
 
+**Caminho A -- script, sem abrir Preferences (tente este primeiro):**
+
+```bash
+python3 scripts/register_attach_listener.py /caminho/do/seu/workspace-capella
+```
+
+Escreve direto o arquivo de preferências que o EASE leria de qualquer
+forma (`<workspace>/.metadata/.plugins/org.eclipse.core.runtime/
+.settings/org.eclipse.ease.ui.scripts.prefs`) -- o mesmo arquivo,
+byte a byte, que sai de clicar "Add..." na tela de Preferences (formato
+confirmado ao vivo, ver comentário do script e
+[[0006-attach-mode-gui-aberta]]). Rode com o Capella **fechado** (ou
+antes de nunca ter aberto esse workspace) -- Eclipse só lê esse arquivo
+na hora que o workspace abre; se o Capella já estiver rodando nesse
+workspace, precisa reiniciar pra pegar.
+
+O que **não** foi possível confirmar ao vivo: se o EASE de fato trata
+uma entrada adicionada assim (sem nunca ter passado pela tela de
+Preferences) exatamente igual a uma adicionada pelo clique, numa GUI
+real -- só consegui verificar isso rodando Capella no modo
+`-appid ...commandline` (o mesmo do bridge.py), que não necessariamente
+roda o mesmo ciclo de vida de plugin que a GUI interativa de verdade.
+Teste depois de rodar o script: abra o Capella nesse workspace e veja se
+`~/.capella-mcp/attach/` aparece em uns 10s. Se não aparecer, siga o
+Caminho B abaixo (ou rode manualmente uma vez via menu, passo 3 do
+Caminho B).
+
+**Caminho B -- pela tela de Preferences (sempre funciona, fallback):**
+
 1. Abra o Capella GUI normalmente, no workspace onde você mantém seus
    modelos de trabalho.
 2. `Window > Preferences > Scripting > Script Locations > Add...` e
@@ -127,6 +156,9 @@ Docker/CI). Ver [[0006-attach-mode-gui-aberta]] pro design completo.
    MCP -- Start Attach Listener" (entrada de menu que o próprio script
    registra). Depois desse primeiro start manual, ele fica rodando pelo
    resto da sessão da GUI sem precisar repetir.
+
+**Nos dois casos, depois de registrado:**
+
 4. Abra o `.aird` que você quer editar via MCP (duplo-clique, do jeito
    normal).
 5. Chame qualquer tool MCP (`get_element`, `create_element`, etc.) com o
