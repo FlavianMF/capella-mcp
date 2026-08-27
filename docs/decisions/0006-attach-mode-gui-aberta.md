@@ -201,6 +201,42 @@ fallback pro clique manual (caminho B, sempre funciona) em
 `docs/architecture.md` -- sem afirmar "resolvido" além do que foi de
 fato verificado.
 
+### Correção: gatilho manual errado (`# menu` não é botão-direito)
+
+Usuário testou (script E clique manual em Preferences) e o item de
+"botão direito > Capella MCP -- Start Attach Listener" não apareceu no
+Project Explorer. Causa raiz, inspecionando o bytecode real de
+`org.eclipse.ease.ui.scripts_0.8.0.*.jar` (`plugin.xml`'s extension
+point `org.eclipse.ease.ui.scripts.keyword` + `MenuHandler`/
+`PopupHandler`/`ToolbarHandler`.class):
+
+- `# menu : <viewID>` contribui pro **menu-dropdown da própria view**
+  (o ícone de seta no canto do toolbar de uma view) -- não é um menu de
+  contexto/botão-direito. A doc do python4capella de onde copiei esse
+  exemplo até chama a seção de "**View Menu**"; interpretação errada
+  minha na hora de escrever o header original.
+- Botão-direito de verdade é o keyword `popup`
+  (`PopupHandler extends ToolbarHandler`), registrado numa location fixa
+  `popup:org.eclipse.ui.popup.any?after=additions` (não recebe viewID
+  como `# menu`/`# toolbar` -- o valor depois do `:` é, pelo único
+  exemplo documentado encontrado, uma expressão
+  `enableFor(<Tipo totalmente qualificado>)`). Não confirmado ao vivo se
+  aceita um tipo Eclipse comum (`IProject`) e não só tipos Capella
+  (`CapellaElement`, o único exemplo visto) -- sem GUI interativa
+  disponível aqui pra testar (o `-appid ...commandline` headless não
+  sobe workbench/menus de verdade).
+
+Corrigido: `attach_listener.py` ganhou `# popup :
+enableFor(org.eclipse.core.resources.IProject)` como bônus best-effort
+(não confirmado), e `# script-type : Python` (presente no único exemplo
+de header completo e funcional da doc, faltava aqui). Mas o fallback
+manual **documentado como confiável** deixou de depender de qualquer
+header custom: é a view **Script Explorer** do próprio EASE
+(`org.eclipse.ease.ui.views.scriptExplorerView`, confirmado via
+`plugin.xml` -- toolbar próprio com botão Run/Edit/Refresh sempre
+presente pra qualquer script de uma Script Location registrada,
+independente de `# menu`/`# popup`/`# toolbar` estarem certos).
+
 ## Consequências
 
 - Leitura (`list_layers`/`list_elements`/`get_element`) e escrita

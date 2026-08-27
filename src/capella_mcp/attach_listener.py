@@ -1,6 +1,8 @@
-# onStartup : 2
-# menu : capella.project.explorer
 # name : Capella MCP -- Start Attach Listener
+# script-type : Python
+# description : Starts the capella-mcp attach-mode listener
+# onStartup : 2
+# popup : enableFor(org.eclipse.core.resources.IProject)
 """EASE/python4capella script -- NOT a normal importable Python module.
 
 This runs INSIDE the user's own Capella GUI process (not in the MCP
@@ -11,15 +13,31 @@ docs/architecture.md for how to register it.
 
 Setup (one-time, per Capella GUI installation):
     Window > Preferences > Scripting > Script Locations > Add this file's
-    folder, engine "Python (Py4J)". The "# onStartup : 2" header above
+    folder, engine "Python (Py4J)" (or run scripts/register_attach_listener.py
+    instead, see docs/architecture.md). The "# onStartup : 2" header above
     should then run this automatically ~2s after the GUI opens (EASE's
     generic onStartup keyword handler -- org.eclipse.ease.ui.scripts's
     StartupHandler -- confirmed to exist, but not confirmed live against
-    a python4capella script specifically). If it does not start on its
-    own, run it once manually: right-click a project in the Project
-    Explorer > the "Capella MCP -- Start Attach Listener" menu entry (the
-    "# menu" header above) -- after that first manual run it keeps
-    running in the background for the rest of the GUI session.
+    a python4capella script specifically).
+
+    If it doesn't start on its own, the RELIABLE manual fallback is
+    EASE's own Script Explorer view, not a custom menu -- earlier
+    versions of this file shipped a "# menu : ..." header expecting a
+    Project Explorer right-click entry, but that keyword contributes to
+    a *view's own dropdown menu* (the small chevron in a view's toolbar
+    corner), not a context menu; confirmed by inspecting
+    org.eclipse.ease.ui.scripts's real MenuHandler/PopupHandler bytecode
+    and plugin.xml, see docs/decisions/0006-attach-mode-gui-aberta.md.
+    To run manually: Window > Show View > Other... > Scripting > Script
+    Explorer, find this script in the list, select it, click the toolbar's
+    Run (▶) button (or right-click it there -- that's the Script
+    Explorer's own native popup, always present regardless of any header
+    below). After that first manual run it keeps running in the
+    background for the rest of the GUI session. The "# popup" header
+    above is a best-effort bonus (right-click a project elsewhere in the
+    workbench) -- its exact enablement syntax against a plain Eclipse
+    IProject (as opposed to a Capella model element, the only documented
+    example) was not confirmed live; don't rely on it as the only path.
 
 What it does: exposes this already-running Capella session to bridge.py
 over a plain file-based protocol (no new process, no new network port --

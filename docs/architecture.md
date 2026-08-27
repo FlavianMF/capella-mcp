@@ -139,8 +139,8 @@ real -- só consegui verificar isso rodando Capella no modo
 roda o mesmo ciclo de vida de plugin que a GUI interativa de verdade.
 Teste depois de rodar o script: abra o Capella nesse workspace e veja se
 `~/.capella-mcp/attach/` aparece em uns 10s. Se não aparecer, siga o
-Caminho B abaixo (ou rode manualmente uma vez via menu, passo 3 do
-Caminho B).
+Caminho B abaixo (ou rode manualmente uma vez pelo Script Explorer,
+passo 3 do Caminho B).
 
 **Caminho B -- pela tela de Preferences (sempre funciona, fallback):**
 
@@ -151,11 +151,20 @@ Caminho B).
    `attach_listener.py`). Engine: "Python (Py4J)".
 3. Feche e reabra o Capella (pra `# onStartup` ter chance de disparar) --
    se depois de ~10s não aparecer `~/.capella-mcp/attach/` criado, o
-   autostart não pegou nesta instalação; rode manualmente uma vez:
-   clique com o botão direito num projeto no Project Explorer > "Capella
-   MCP -- Start Attach Listener" (entrada de menu que o próprio script
-   registra). Depois desse primeiro start manual, ele fica rodando pelo
-   resto da sessão da GUI sem precisar repetir.
+   autostart não pegou nesta instalação; rode manualmente uma vez pelo
+   **Script Explorer** (view nativa do EASE, sempre disponível
+   independente de qualquer header do script): `Window > Show View >
+   Other... > Scripting > Script Explorer`, ache `attach_listener.py` na
+   lista, selecione e clique no botão **Run** (▶) do toolbar da view (ou
+   botão direito nele mesmo, dentro da lista). Depois desse primeiro
+   start manual, ele fica rodando pelo resto da sessão da GUI sem
+   precisar repetir.
+
+   (Uma versão anterior deste guia mandava clicar com o botão direito no
+   Project Explorer -- isso usava o header `# menu`, que na verdade
+   contribui pro menu-dropdown da própria view, não pra um menu de
+   contexto; corrigido depois de testar e não aparecer. Ver
+   [[0006-attach-mode-gui-aberta]] pro root cause.)
 
 **Nos dois casos, depois de registrado:**
 
