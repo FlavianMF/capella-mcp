@@ -34,6 +34,15 @@ abre o modelo → lê/modifica (com transaction) → salva → encerra o
 processo. Não há estado persistente entre chamadas (ver
 [[0002-headless-por-chamada]]).
 
+Esse é sempre o caminho usado em Docker/CI. Em dev local, se o usuário
+tem o Capella GUI aberto no mesmo modelo (com `attach_listener.py`
+registrado -- ver [[0006-attach-mode-gui-aberta]]), `list_layers`/
+`list_elements`/`get_element`/`create_element`/`update_element` detectam
+isso sozinhos e conversam com essa sessão já aberta em vez de subir um
+Capella novo -- a GUI reflete a escrita do MCP na hora, e o MCP enxerga o
+que o usuário editou na tela mesmo antes de ele salvar. Sem GUI aberta
+(ou fora dessas 5 tools), nada muda.
+
 ## Decisões
 
 - [[0001-python4capella-nao-e-lib-externa]] — por que a integração não é um
@@ -44,6 +53,9 @@ processo. Não há estado persistente entre chamadas (ver
   única imagem Docker.
 - [[0004-escopo-v1-leitura-e-escrita]] — por que a v1 já inclui escrita, não
   só leitura.
+- [[0006-attach-mode-gui-aberta]] — por que (e como) o MCP passa a falar
+  direto com um Capella GUI já aberto do usuário, em vez de só spawnar
+  headless, em dev local.
 
 ## Conceitos
 
@@ -97,3 +109,69 @@ Tools (ações, leitura + escrita):
 Resources adicionais (diagramas):
 - `capella://{model_path}/diagrams`
 - `capella://{model_path}/diagram/{diagram_uid}`
+
+## Attach mode -- registrar `attach_listener.py` na sua GUI local
+
+Opcional, só faz sentido rodando o Capella GUI localmente (não em
+Docker/CI). Ver [[0006-attach-mode-gui-aberta]] pro design completo.
+
+**Caminho A -- script, sem abrir Preferences (tente este primeiro):**
+
+```bash
+python3 scripts/register_attach_listener.py /caminho/do/seu/workspace-capella
+```
+
+Escreve direto o arquivo de preferências que o EASE leria de qualquer
+forma (`<workspace>/.metadata/.plugins/org.eclipse.core.runtime/
+.settings/org.eclipse.ease.ui.scripts.prefs`) -- o mesmo arquivo,
+byte a byte, que sai de clicar "Add..." na tela de Preferences (formato
+confirmado ao vivo, ver comentário do script e
+[[0006-attach-mode-gui-aberta]]). Rode com o Capella **fechado** (ou
+antes de nunca ter aberto esse workspace) -- Eclipse só lê esse arquivo
+na hora que o workspace abre; se o Capella já estiver rodando nesse
+workspace, precisa reiniciar pra pegar.
+
+O que **não** foi possível confirmar ao vivo: se o EASE de fato trata
+uma entrada adicionada assim (sem nunca ter passado pela tela de
+Preferences) exatamente igual a uma adicionada pelo clique, numa GUI
+real -- só consegui verificar isso rodando Capella no modo
+`-appid ...commandline` (o mesmo do bridge.py), que não necessariamente
+roda o mesmo ciclo de vida de plugin que a GUI interativa de verdade.
+Teste depois de rodar o script: abra o Capella nesse workspace e veja se
+`~/.capella-mcp/attach/` aparece em uns 10s. Se não aparecer, siga o
+Caminho B abaixo (ou rode manualmente uma vez pelo Script Explorer,
+passo 3 do Caminho B).
+
+**Caminho B -- pela tela de Preferences (sempre funciona, fallback):**
+
+1. Abra o Capella GUI normalmente, no workspace onde você mantém seus
+   modelos de trabalho.
+2. `Window > Preferences > Scripting > Script Locations > Add...` e
+   aponte para a pasta `src/capella_mcp/` deste repo (onde está
+   `attach_listener.py`). Engine: "Python (Py4J)".
+3. Feche e reabra o Capella (pra `# onStartup` ter chance de disparar) --
+   se depois de ~10s não aparecer `~/.capella-mcp/attach/` criado, o
+   autostart não pegou nesta instalação; rode manualmente uma vez pelo
+   **Script Explorer** (view nativa do EASE, sempre disponível
+   independente de qualquer header do script): `Window > Show View >
+   Other... > Scripting > Script Explorer`, ache `attach_listener.py` na
+   lista, selecione e clique no botão **Run** (▶) do toolbar da view (ou
+   botão direito nele mesmo, dentro da lista). Depois desse primeiro
+   start manual, ele fica rodando pelo resto da sessão da GUI sem
+   precisar repetir.
+
+   (Uma versão anterior deste guia mandava clicar com o botão direito no
+   Project Explorer -- isso usava o header `# menu`, que na verdade
+   contribui pro menu-dropdown da própria view, não pra um menu de
+   contexto; corrigido depois de testar e não aparecer. Ver
+   [[0006-attach-mode-gui-aberta]] pro root cause.)
+
+**Nos dois casos, depois de registrado:**
+
+4. Abra o `.aird` que você quer editar via MCP (duplo-clique, do jeito
+   normal).
+5. Chame qualquer tool MCP (`get_element`, `create_element`, etc.) com o
+   mesmo `model_path` -- o bridge detecta a GUI sozinho (não precisa de
+   env var). Pra confirmar que pegou o attach e não spawnou um Capella
+   novo: a chamada volta bem mais rápido que o normal (segundos, não o
+   ~1min de subir um Capella do zero).
