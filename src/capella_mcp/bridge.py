@@ -21,6 +21,7 @@ import os
 import signal
 import subprocess
 import textwrap
+import time
 import traceback
 import uuid
 import zipfile
@@ -527,6 +528,14 @@ def _preamble(result_path: Path) -> str:
         include('workspace://Python4Capella/simplified_api/capella.py')
         import json, traceback
 
+        # False in every spawn-mode script (this preamble). Attach mode's
+        # listener (attach_listener.py) predefines this as True in its own
+        # exec namespace before running the exact same body text -- see
+        # docs/decisions/0006-attach-mode-gui-aberta.md's "no forced save"
+        # decision. Write-operation bodies must guard model.save() behind
+        # `if not _ATTACH_MODE:` instead of calling it unconditionally.
+        _ATTACH_MODE = False
+
         def _write_result(data):
             with open({str(result_path)!r}, "w") as f:
                 json.dump(data, f)
@@ -623,6 +632,120 @@ def _run_script(script_body: str, timeout: float = DEFAULT_TIMEOUT) -> dict:
     return data
 
 
+# Attach mode -- MCP tool calls talk to a Capella GUI the user already has
+# open, instead of spawning a fresh headless Capella. See
+# docs/decisions/0006-attach-mode-gui-aberta.md for why this exists and
+# src/capella_mcp/attach_listener.py (the counterpart script the user
+# registers inside their own Capella GUI) for the other half of the
+# protocol this talks to.
+#
+# Auto-detected per call, per model_path -- no env var/flag. If no live,
+# fresh-enough attach target is found for the model being touched, every
+# dispatcher below falls straight through to the spawn-headless path
+# (_run_script) exactly as before this feature existed.
+ATTACH_ROOT = Path(os.environ.get("CAPELLA_MCP_ATTACH_ROOT", str(Path.home() / ".capella-mcp" / "attach")))
+ATTACH_HEARTBEAT_MAX_AGE_SECONDS = float(os.environ.get("CAPELLA_MCP_ATTACH_MAX_AGE_SECONDS", "10"))
+ATTACH_REQUEST_TIMEOUT_SECONDS = float(os.environ.get("CAPELLA_MCP_ATTACH_TIMEOUT_SECONDS", "30"))
+_ATTACH_POLL_INTERVAL_SECONDS = 0.2
+
+
+class _AttachUnavailable(Exception):
+    """Internal signal only -- an attach target was detected but didn't
+    answer in time (listener not actually running, GUI closed mid-call,
+    etc). Callers catch this and fall back to spawn mode; it must never
+    reach an MCP tool caller the way BridgeError does."""
+
+
+class AttachInfo:
+    __slots__ = ("heartbeat_path", "requests_dir", "pid")
+
+    def __init__(self, heartbeat_path: Path, requests_dir: Path, pid: int | None):
+        self.heartbeat_path = heartbeat_path
+        self.requests_dir = requests_dir
+        self.pid = pid
+
+
+def _attach_target(abs_path: Path) -> AttachInfo | None:
+    """Scan ~/.capella-mcp/attach/*/heartbeat.json for a live (fresh
+    heartbeat) Capella GUI that currently has abs_path open. Matches on
+    absolute filesystem path (what attach_listener.py resolves each open
+    Session's resource URI down to), not on any workspace-relative
+    project path -- the user's own long-lived GUI workspace has no reason
+    to use the same throwaway project layout _workspace_path_for_model()
+    invents for spawn mode."""
+    if not ATTACH_ROOT.is_dir():
+        return None
+    now = time.time()
+    target = str(abs_path)
+    for heartbeat_path in ATTACH_ROOT.glob("*/heartbeat.json"):
+        try:
+            data = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        heartbeat_ts = data.get("heartbeat_ts")
+        if not isinstance(heartbeat_ts, (int, float)) or now - heartbeat_ts > ATTACH_HEARTBEAT_MAX_AGE_SECONDS:
+            continue
+        if target not in (data.get("open_models") or []):
+            continue
+        return AttachInfo(
+            heartbeat_path=heartbeat_path,
+            requests_dir=heartbeat_path.parent / "requests",
+            pid=data.get("pid"),
+        )
+    return None
+
+
+def _run_script_attach(script_body: str, attach: AttachInfo, timeout: float = ATTACH_REQUEST_TIMEOUT_SECONDS) -> dict:
+    """Mirrors _run_script's contract (same script_body shape, same
+    {"error":...} -> BridgeError behavior) but dispatches to an already-
+    running Capella GUI over the file-based request/response protocol
+    attach_listener.py implements, instead of spawning a new process."""
+    attach.requests_dir.mkdir(parents=True, exist_ok=True)
+    request_id = uuid.uuid4().hex
+    request_path = attach.requests_dir / f"{request_id}.request.json"
+    result_path = attach.requests_dir / f"{request_id}.result.json"
+    request_path.write_text(json.dumps({"body": script_body}), encoding="utf-8")
+
+    deadline = time.monotonic() + timeout
+    while not result_path.exists():
+        if time.monotonic() >= deadline:
+            for stale in (request_path, result_path):
+                try:
+                    stale.unlink()
+                except FileNotFoundError:
+                    pass
+            raise _AttachUnavailable(f"attach listener (pid={attach.pid}) did not respond within {timeout}s")
+        time.sleep(_ATTACH_POLL_INTERVAL_SECONDS)
+
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+    finally:
+        for leftover in (request_path, result_path):
+            try:
+                leftover.unlink()
+            except FileNotFoundError:
+                pass
+
+    if "error" in data:
+        raise BridgeError(f"{data['error']}\n{data.get('traceback', '')}")
+    return data
+
+
+def _dispatch(abs_path: Path, body: str, timeout: float = DEFAULT_TIMEOUT) -> dict:
+    """The one seam every read/write dispatcher below funnels through:
+    attach (live GUI session, if one has abs_path open) takes priority
+    over spawning a fresh headless Capella. A detected-but-unresponsive
+    attach target falls back to spawn rather than failing the call --
+    auto-detection is a heuristic (heartbeat freshness), not a promise."""
+    attach = _attach_target(abs_path)
+    if attach is not None:
+        try:
+            return _run_script_attach(body, attach)
+        except _AttachUnavailable:
+            pass
+    return _run_script(body, timeout=timeout)
+
+
 def list_layers(model_path: str) -> dict:
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)
@@ -639,7 +762,7 @@ def list_layers(model_path: str) -> dict:
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
-    return _run_script(body)
+    return _dispatch(abs_path, body)
 
 
 def list_elements(model_path: str, layer: str, type_filter: str | None = None) -> dict:
@@ -666,7 +789,7 @@ def list_elements(model_path: str, layer: str, type_filter: str | None = None) -
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
-    return _run_script(body)
+    return _dispatch(abs_path, body)
 
 
 def get_element(model_path: str, element_id: str) -> dict:
@@ -696,7 +819,7 @@ def get_element(model_path: str, element_id: str) -> dict:
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
-    return _run_script(body)
+    return _dispatch(abs_path, body)
 
 
 def create_element(
@@ -1143,12 +1266,13 @@ def create_element(
             except Exception:
                 model.rollback_transaction()
                 raise
-            model.save()
+            if not _ATTACH_MODE:
+                model.save()
             _write_result(_serialize(el))
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
-    return _run_script(body)
+    return _dispatch(abs_path, body)
 
 
 def update_element(model_path: str, element_id: str, attributes: dict) -> dict:
@@ -1184,12 +1308,13 @@ def update_element(model_path: str, element_id: str, attributes: dict) -> dict:
                 except Exception:
                     model.rollback_transaction()
                     raise
-                model.save()
+                if not _ATTACH_MODE:
+                    model.save()
                 _write_result(_serialize(found))
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
-    return _run_script(body)
+    return _dispatch(abs_path, body)
 
 
 def _diagram_include() -> str:
