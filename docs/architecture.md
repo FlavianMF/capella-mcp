@@ -20,19 +20,27 @@ Cliente MCP (Claude Code/Desktop)
     ▼
 Container Docker (imagem única: JDK + Capella + python4capella + Xvfb + servidor MCP)
     │
-    │  cada tool call:
-    ▼
-xvfb-run -a capellac -application org.polarsys.capella.core.commandline.core
-         -appid org.eclipse.python4capella.commandline
-    │  script gerado a partir de template fixo, usa simplified_api/capella.py
+    │  list_layers / list_elements / get_element:
+    ├──────────────────────────────┐
+    ▼ (tenta primeiro)             │ (fallback automático, ver 0005)
+fast_reader.py                     ▼
+capellambse.MelodyModel      xvfb-run -a capellac -application org.polarsys.capella.core.commandline.core
+(sem JVM, ~ms)                        -appid org.eclipse.python4capella.commandline
+    │                           script gerado a partir de template fixo, usa simplified_api/capella.py
+    │  demais tools (escrita, diagramas): sempre headless ──┘
     ▼
 Modelo Capella (.aird) — bind mount do host em /workspace/models
 ```
 
-Cada tool call é um ciclo completo e isolado: sobe o Capella headless →
-abre o modelo → lê/modifica (com transaction) → salva → encerra o
-processo. Não há estado persistente entre chamadas (ver
-[[0002-headless-por-chamada]]).
+Toda tool de escrita/diagrama é um ciclo completo e isolado: sobe o
+Capella headless → abre o modelo → lê/modifica (com transaction) → salva
+→ encerra o processo. Não há estado persistente entre chamadas (ver
+[[0002-headless-por-chamada]]). As 3 tools de leitura pura passam primeiro
+pelo caminho rápido `capellambse` (mesmo processo do servidor MCP, sem
+subir Capella) e só caem no caminho acima se o `capellambse` não cobrir o
+caso (ver [[0005-camada-leitura-capellambse]]). Um `bridge.model_lock()`
+por `model_path` evita que uma leitura rápida aconteça no meio de um
+`save()` headless.
 
 ## Decisões
 
@@ -44,6 +52,9 @@ processo. Não há estado persistente entre chamadas (ver
   única imagem Docker.
 - [[0004-escopo-v1-leitura-e-escrita]] — por que a v1 já inclui escrita, não
   só leitura.
+- [[0005-camada-leitura-capellambse]] — por que as 3 tools de leitura pura
+  ganharam um caminho rápido via `capellambse`, e por que ele mora dentro
+  do próprio servidor MCP em vez de um bridge no lado do cliente.
 
 ## Conceitos
 
@@ -60,9 +71,9 @@ Resources (leitura, navegação):
 - `capella://{model_path}/element/{element_id}`
 
 Tools (ações, leitura + escrita):
-- `list_layers(model_path)`
-- `list_elements(model_path, layer, type_filter=None)`
-- `get_element(model_path, element_id)`
+- `list_layers(model_path)` — fast-path `capellambse` (ver [[0005-camada-leitura-capellambse]])
+- `list_elements(model_path, layer, type_filter=None)` — fast-path só com `type_filter`
+- `get_element(model_path, element_id)` — fast-path `capellambse`
 - `create_element(model_path, layer, type, name, parent_id, attributes={})`
 - `update_element(model_path, element_id, attributes)`
 - `create_diagram(model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth)`

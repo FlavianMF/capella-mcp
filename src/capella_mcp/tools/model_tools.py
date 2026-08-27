@@ -51,6 +51,10 @@ def register(mcp: MCPServer) -> None:
         metamodel class name (e.g. "LogicalComponent"). If parent_id is
         omitted, the element is added directly under the layer's root.
 
+        Locked (bridge.model_lock) for the whole call so a concurrent
+        fast_reader read never observes a partially-written model -- see
+        docs/decisions/0005-camada-leitura-capellambse.md.
+
         Only these type_names have a validated containment path and will
         actually persist: LogicalComponent, SystemFunction, LogicalFunction,
         OperationalActivity, OperationalActor, OperationalEntity,
@@ -75,12 +79,18 @@ def register(mcp: MCPServer) -> None:
         with a valid id, but the element never actually appears in the
         model on a later call.
         """
-        return bridge.create_element(model_path, layer, type_name, name, parent_id, attributes)
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.create_element(model_path, layer, type_name, name, parent_id, attributes)
 
     @mcp.tool()
     def update_element(model_path: str, element_id: str, attributes: dict[str, Any]) -> dict:
-        """Update attributes of an existing element in a Capella model and save the model."""
-        return bridge.update_element(model_path, element_id, attributes)
+        """Update attributes of an existing element in a Capella model and save the model.
+
+        Locked (bridge.model_lock) for the whole call -- see
+        docs/decisions/0005-camada-leitura-capellambse.md.
+        """
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.update_element(model_path, element_id, attributes)
 
     @mcp.tool()
     def create_diagram(
@@ -111,9 +121,10 @@ def register(mcp: MCPServer) -> None:
         element of that type exists in the layer). include_relations also
         adds functional-exchange edges found among the placed elements.
         """
-        return bridge.create_diagram(
-            model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth
-        )
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.create_diagram(
+                model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth
+            )
 
     @mcp.tool()
     def create_container_diagram(
@@ -143,7 +154,8 @@ def register(mcp: MCPServer) -> None:
         fix -- DiagramServices.createContainer() instead of
         python4capella's apply_mapping()).
         """
-        return bridge.create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.create_container_diagram(model_path, layer, type_name, diagram_name, max_depth)
 
     @mcp.tool()
     def create_class_diagram(
@@ -165,7 +177,8 @@ def register(mcp: MCPServer) -> None:
         CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause
         investigation and fix).
         """
-        return bridge.create_class_diagram(model_path, layer, diagram_name, max_depth)
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.create_class_diagram(model_path, layer, diagram_name, max_depth)
 
     @mcp.tool()
     def create_capability_diagram(model_path: str, diagram_name: str | None = None) -> dict:
@@ -183,7 +196,8 @@ def register(mcp: MCPServer) -> None:
         CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause
         investigation and fix).
         """
-        return bridge.create_capability_diagram(model_path, diagram_name)
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.create_capability_diagram(model_path, diagram_name)
 
     @mcp.tool()
     def create_scenario_diagram(
@@ -206,7 +220,8 @@ def register(mcp: MCPServer) -> None:
         module, an explicit re-run of Sirius's own sequence-diagram
         ordering-repair chain).
         """
-        return bridge.create_scenario_diagram(model_path, scenario_id, scenario_kind, diagram_name)
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.create_scenario_diagram(model_path, scenario_id, scenario_kind, diagram_name)
 
     @mcp.tool()
     def delete_diagram(model_path: str, diagram_uid: str) -> dict:
@@ -215,7 +230,8 @@ def register(mcp: MCPServer) -> None:
         diagram_uid is the value returned as "diagram_uid" by create_diagram
         or "uid" by the capella://{model_path}/diagrams resource.
         """
-        return bridge.delete_diagram(model_path, diagram_uid)
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.delete_diagram(model_path, diagram_uid)
 
     @mcp.tool()
     def layout_diagram(model_path: str, diagram_uid: str) -> dict:
@@ -230,7 +246,8 @@ def register(mcp: MCPServer) -> None:
         diagram_uid is the value returned as "diagram_uid" by create_diagram
         or "uid" by the capella://{model_path}/diagrams resource.
         """
-        return bridge.layout_diagram(model_path, diagram_uid)
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.layout_diagram(model_path, diagram_uid)
 
     @mcp.tool()
     def export_diagram(model_path: str, image_format: str = "PNG") -> dict:

@@ -15,8 +15,10 @@ exception, not arbitrary code execution inside the Capella process.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -25,6 +27,12 @@ import traceback
 import uuid
 import zipfile
 from pathlib import Path
+
+from filelock import FileLock
+
+from capella_mcp import fast_reader
+
+logger = logging.getLogger(__name__)
 
 CAPELLA_BIN = os.environ.get("CAPELLA_BIN", "/opt/capella/capella")
 MODELS_ROOT = Path(os.environ.get("CAPELLA_MODELS_ROOT", "/workspace/models")).resolve()
@@ -506,6 +514,25 @@ def _layout_tree(tree: list[dict]) -> dict[str, list[int]]:
     return bounds
 
 
+def model_lock(abs_path: Path | None):
+    """File lock guarding a model path against a fast_reader (capellambse)
+    read racing a headless write's model.save() -- see
+    docs/decisions/0005-camada-leitura-capellambse.md. Headless reads don't
+    need it (a Capella process opens the file directly, same as any other
+    reader would); only fast_reader reads and headless writes (wrapped by
+    tools/model_tools.py around every write tool call) take it.
+
+    Public (no leading underscore): tools/model_tools.py wraps each write
+    tool's call to bridge.* with this, since bridge.py's write functions
+    are multi-pass (several _run_script() calls per diagram tool -- see
+    e.g. create_diagram's pass1/pass2/pass3) and the whole sequence needs
+    to be one atomic critical section, not just each individual pass.
+    """
+    if abs_path is None:
+        return contextlib.nullcontext()
+    return FileLock(str(abs_path) + ".lock")
+
+
 class BridgeError(Exception):
     """Raised for anything that stops a tool call from producing a result:
     invalid model_path, Capella process failure/timeout, or an error the
@@ -624,6 +651,19 @@ def _run_script(script_body: str, timeout: float = DEFAULT_TIMEOUT) -> dict:
 
 
 def list_layers(model_path: str) -> dict:
+    """Dispatcher: capellambse fast-path first (ms, no Capella process), the
+    headless template below as fallback. See
+    docs/decisions/0005-camada-leitura-capellambse.md."""
+    abs_path = resolve_model_path(model_path)
+    with model_lock(abs_path):
+        try:
+            return fast_reader.list_layers(abs_path)
+        except Exception as exc:
+            logger.info("fast_reader.list_layers miss (%r), falling back to headless", exc)
+    return _list_layers_headless(model_path)
+
+
+def _list_layers_headless(model_path: str) -> dict:
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)
     body = textwrap.dedent(f"""\
@@ -643,6 +683,24 @@ def list_layers(model_path: str) -> dict:
 
 
 def list_elements(model_path: str, layer: str, type_filter: str | None = None) -> dict:
+    """Dispatcher -- see list_layers docstring. fast_reader only handles the
+    type_filter-given case (see its own comment for why the no-filter shape
+    has no clean capellambse equivalent); a missing type_filter falls
+    straight through to headless."""
+    if layer not in LAYER_METHODS:
+        raise BridgeError(f"unknown layer {layer!r}, expected one of {sorted(LAYER_METHODS)}")
+    abs_path = resolve_model_path(model_path)
+    with model_lock(abs_path):
+        try:
+            return fast_reader.list_elements(abs_path, layer, type_filter)
+        except fast_reader.NotFound as exc:
+            raise BridgeError(str(exc)) from exc
+        except Exception as exc:
+            logger.info("fast_reader.list_elements miss (%r), falling back to headless", exc)
+    return _list_elements_headless(model_path, layer, type_filter)
+
+
+def _list_elements_headless(model_path: str, layer: str, type_filter: str | None = None) -> dict:
     if layer not in LAYER_METHODS:
         raise BridgeError(f"unknown layer {layer!r}, expected one of {sorted(LAYER_METHODS)}")
     abs_path = resolve_model_path(model_path)
@@ -670,6 +728,19 @@ def list_elements(model_path: str, layer: str, type_filter: str | None = None) -
 
 
 def get_element(model_path: str, element_id: str) -> dict:
+    """Dispatcher -- see list_layers docstring."""
+    abs_path = resolve_model_path(model_path)
+    with model_lock(abs_path):
+        try:
+            return fast_reader.get_element(abs_path, element_id)
+        except fast_reader.NotFound as exc:
+            raise BridgeError(str(exc)) from exc
+        except Exception as exc:
+            logger.info("fast_reader.get_element miss (%r), falling back to headless", exc)
+    return _get_element_headless(model_path, element_id)
+
+
+def _get_element_headless(model_path: str, element_id: str) -> dict:
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)
     body = textwrap.dedent(f"""\

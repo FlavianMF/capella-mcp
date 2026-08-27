@@ -11,3 +11,6 @@ build/
 
 # marcador de projeto Eclipse gerado em runtime por _ensure_models_project()
 tests/fixtures/.project
+
+# lock file por modelo, criado em runtime por bridge.model_lock()
+*.aird.lock

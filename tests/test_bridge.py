@@ -271,6 +271,59 @@ class TestGeneratedScripts:
         assert "start_transaction" in captured["script"]
 
 
+class TestHybridReadDispatcher:
+    """list_layers/list_elements/get_element try fast_reader first (see
+    docs/decisions/0005-camada-leitura-capellambse.md) -- these tests stub
+    fast_reader directly instead of running it against a real model, since
+    that side is already covered by tests/test_fast_reader.py against the
+    real fixtures."""
+
+    def test_fast_reader_hit_skips_subprocess_entirely(self, models_root, workspace_root, monkeypatch):
+        def _run(*args, **kwargs):
+            raise AssertionError("subprocess should not run when fast_reader succeeds")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+        monkeypatch.setattr(
+            bridge.fast_reader, "list_layers", lambda abs_path: {"layers": [{"layer": "oa", "present": True}]}
+        )
+        assert bridge.list_layers("demo.aird") == {"layers": [{"layer": "oa", "present": True}]}
+
+    def test_fast_reader_not_found_short_circuits_without_subprocess(
+        self, models_root, workspace_root, monkeypatch
+    ):
+        def _run(*args, **kwargs):
+            raise AssertionError("subprocess should not run for a genuine NotFound")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+
+        def _raise_not_found(abs_path, element_id):
+            raise bridge.fast_reader.NotFound(f"element not found: {element_id}")
+
+        monkeypatch.setattr(bridge.fast_reader, "get_element", _raise_not_found)
+        with pytest.raises(bridge.BridgeError, match="element not found"):
+            bridge.get_element("demo.aird", "missing-id")
+
+    def test_fast_reader_generic_error_falls_back_to_headless(self, models_root, workspace_root, monkeypatch):
+        expected = {"id": "x", "label": "X", "type": "LogicalComponent"}
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run_writing(expected))
+
+        def _raise(abs_path, element_id):
+            raise AttributeError("simulated capellambse coverage gap")
+
+        monkeypatch.setattr(bridge.fast_reader, "get_element", _raise)
+        assert bridge.get_element("demo.aird", "x") == expected
+
+    def test_list_elements_no_type_filter_falls_back_to_headless(
+        self, models_root, workspace_root, monkeypatch
+    ):
+        """fast_reader.list_elements always raises NotImplementedError when
+        type_filter is None (no clean capellambse equivalent, see its own
+        comment) -- confirm that reaches headless rather than erroring out."""
+        expected = {"elements": []}
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run_writing(expected))
+        assert bridge.list_elements("demo.aird", "la") == expected
+
+
 class TestExportDiagram:
     def test_export_diagram_recursive_glob_finds_nested_files(
         self, models_root, workspace_root, monkeypatch
