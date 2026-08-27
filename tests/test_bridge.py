@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -138,11 +139,16 @@ class TestGeneratedScripts:
         )
         assert "LogicalComponent" in captured["script"]
         assert "start_transaction" in captured["script"]
+        # save() must be guarded so the exact same body text is safe to
+        # reuse unmodified for an attach-mode write -- see AttachMode's
+        # "no forced save" tests below and docs/decisions/0006.
+        assert "if not _ATTACH_MODE:" in captured["script"]
 
     def test_update_element(self, models_root, workspace_root, monkeypatch):
         captured = self._capture_and_compile(monkeypatch)
         bridge.update_element("demo.aird", "some-id", {"description": "baz"})
         assert "start_transaction" in captured["script"]
+        assert "if not _ATTACH_MODE:" in captured["script"]
 
     def test_list_diagrams(self, models_root, workspace_root, monkeypatch):
         captured = self._capture_and_compile(monkeypatch, {"diagrams": []})
@@ -863,3 +869,196 @@ class TestLayoutDiagram:
         assert "getDeclaredConstructors" in script
         assert "ShellCls" in script
         assert "DisplayCls" in script
+
+
+class TestAttachMode:
+    """No real Capella/Capella GUI involved -- attach_listener.py's half of
+    the protocol is stood in for by directly writing/reading the same
+    files it would, from the test itself (see the _fake_listener_writes_
+    helper below). See docs/decisions/0006-attach-mode-gui-aberta.md."""
+
+    def _fresh_heartbeat(self, attach_root: Path, open_models: list[str], pid: int = 4321, age: float = 0.0):
+        workspace_dir = attach_root / "abc123"
+        workspace_dir.mkdir(parents=True)
+        heartbeat = {
+            "pid": pid,
+            "workspace_path": "/fake/gui/workspace",
+            "open_models": open_models,
+            "heartbeat_ts": time.time() - age,
+        }
+        (workspace_dir / "heartbeat.json").write_text(json.dumps(heartbeat))
+        return workspace_dir
+
+    # -- _attach_target ---------------------------------------------------
+
+    def test_attach_target_none_when_root_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", tmp_path / "does-not-exist")
+        assert bridge._attach_target(Path("/models/demo.aird")) is None
+
+    def test_attach_target_none_when_heartbeat_stale(self, tmp_path, monkeypatch):
+        attach_root = tmp_path / "attach"
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", attach_root)
+        target = Path("/models/demo.aird")
+        self._fresh_heartbeat(attach_root, [str(target)], age=999)
+        assert bridge._attach_target(target) is None
+
+    def test_attach_target_none_when_model_not_open(self, tmp_path, monkeypatch):
+        attach_root = tmp_path / "attach"
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", attach_root)
+        self._fresh_heartbeat(attach_root, ["/models/other.aird"])
+        assert bridge._attach_target(Path("/models/demo.aird")) is None
+
+    def test_attach_target_found(self, tmp_path, monkeypatch):
+        attach_root = tmp_path / "attach"
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", attach_root)
+        target = Path("/models/demo.aird")
+        self._fresh_heartbeat(attach_root, [str(target)], pid=999)
+        info = bridge._attach_target(target)
+        assert info is not None
+        assert info.pid == 999
+        assert info.requests_dir.name == "requests"
+
+    # -- _run_script_attach -------------------------------------------------
+
+    def _fake_listener_writes(self, requests_dir: Path, payload: dict):
+        """Stand-in for attach_listener.py's request loop: picks up the one
+        pending *.request.json and writes its *.result.json, exactly like
+        the real listener would (minus actually touching Capella)."""
+
+        def _respond(*_args, **_kwargs):
+            req_files = list(requests_dir.glob("*.request.json"))
+            assert len(req_files) == 1, "expected exactly one pending request"
+            req_id = req_files[0].name.removesuffix(".request.json")
+            (requests_dir / f"{req_id}.result.json").write_text(json.dumps(payload))
+
+        return _respond
+
+    def test_run_script_attach_happy_path(self, tmp_path, monkeypatch):
+        requests_dir = tmp_path / "requests"
+        attach = bridge.AttachInfo(heartbeat_path=tmp_path / "heartbeat.json", requests_dir=requests_dir, pid=111)
+        monkeypatch.setattr(bridge.time, "sleep", self._fake_listener_writes(requests_dir, {"ok": True}))
+
+        result = bridge._run_script_attach("body-text", attach, Path("/models/demo.aird"), timeout=5)
+
+        assert result == {"ok": True}
+        assert list(requests_dir.glob("*.json")) == []  # request + result both cleaned up
+
+    def test_run_script_attach_request_carries_model_path(self, tmp_path, monkeypatch):
+        # attach_listener.py needs this to bind CapellaModel to the right
+        # already-open Session -- the body text alone only has a
+        # spawn-mode-style workspace-relative path, meaningless in a real
+        # GUI workspace (see attach_listener.py's _bound_capella_model).
+        requests_dir = tmp_path / "requests"
+        attach = bridge.AttachInfo(heartbeat_path=tmp_path / "heartbeat.json", requests_dir=requests_dir, pid=111)
+        captured = {}
+
+        def _respond(*_args, **_kwargs):
+            req_files = list(requests_dir.glob("*.request.json"))
+            payload = json.loads(req_files[0].read_text())
+            captured["model_path"] = payload.get("model_path")
+            req_id = req_files[0].name.removesuffix(".request.json")
+            (requests_dir / f"{req_id}.result.json").write_text(json.dumps({"ok": True}))
+
+        monkeypatch.setattr(bridge.time, "sleep", _respond)
+        bridge._run_script_attach("body-text", attach, Path("/home/x/demo.aird"), timeout=5)
+
+        assert captured["model_path"] == "/home/x/demo.aird"
+
+    def test_run_script_attach_error_result_raises_bridge_error(self, tmp_path, monkeypatch):
+        requests_dir = tmp_path / "requests"
+        attach = bridge.AttachInfo(heartbeat_path=tmp_path / "heartbeat.json", requests_dir=requests_dir, pid=222)
+        monkeypatch.setattr(
+            bridge.time, "sleep", self._fake_listener_writes(requests_dir, {"error": "boom", "traceback": "tb"})
+        )
+
+        with pytest.raises(bridge.BridgeError, match="boom"):
+            bridge._run_script_attach("body-text", attach, Path("/models/demo.aird"), timeout=5)
+
+    def test_run_script_attach_timeout_raises_attach_unavailable(self, tmp_path):
+        requests_dir = tmp_path / "requests"
+        attach = bridge.AttachInfo(heartbeat_path=tmp_path / "heartbeat.json", requests_dir=requests_dir, pid=333)
+
+        with pytest.raises(bridge._AttachUnavailable):
+            bridge._run_script_attach("body-text", attach, Path("/models/demo.aird"), timeout=0)
+
+        # a listener that never answers must not leave the request behind
+        assert list(requests_dir.glob("*.request.json")) == []
+
+    # -- _dispatch ----------------------------------------------------------
+
+    def test_dispatch_uses_attach_and_never_spawns(self, tmp_path, monkeypatch):
+        attach_root = tmp_path / "attach"
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", attach_root)
+        target = tmp_path / "models" / "demo.aird"
+        workspace_dir = self._fresh_heartbeat(attach_root, [str(target)])
+        requests_dir = workspace_dir / "requests"
+
+        def _spawn_should_not_run(*_a, **_kw):
+            raise AssertionError("spawn mode must not run when attach is available")
+
+        monkeypatch.setattr(bridge, "_run_script", _spawn_should_not_run)
+        monkeypatch.setattr(bridge.time, "sleep", self._fake_listener_writes(requests_dir, {"attached": True}))
+
+        assert bridge._dispatch(target, "body-text") == {"attached": True}
+
+    def test_dispatch_falls_back_to_spawn_when_attach_unavailable(self, tmp_path, monkeypatch):
+        attach_root = tmp_path / "attach"
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", attach_root)
+        target = tmp_path / "models" / "demo.aird"
+        self._fresh_heartbeat(attach_root, [str(target)])
+
+        def _raise_unavailable(_body, _attach, _model_path):
+            raise bridge._AttachUnavailable("listener not responding")
+
+        monkeypatch.setattr(bridge, "_run_script_attach", _raise_unavailable)
+        monkeypatch.setattr(bridge, "_run_script", lambda body, timeout=None: {"spawned": True})
+
+        assert bridge._dispatch(target, "body-text") == {"spawned": True}
+
+    def test_dispatch_ignored_when_no_attach_target(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", tmp_path / "no-such-dir")
+
+        monkeypatch.setattr(bridge, "_run_script", lambda body, timeout=None: {"spawned": True})
+
+        assert bridge._dispatch(tmp_path / "models" / "demo.aird", "body-text") == {"spawned": True}
+
+    # -- end-to-end through a real public dispatcher -------------------------
+
+    def test_get_element_uses_attach_when_gui_has_it_open(self, models_root, tmp_path, monkeypatch):
+        attach_root = tmp_path / "attach"
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", attach_root)
+        abs_path = (models_root / "demo.aird").resolve()
+        workspace_dir = self._fresh_heartbeat(attach_root, [str(abs_path)])
+        requests_dir = workspace_dir / "requests"
+
+        def _spawn_should_not_run(*_a, **_kw):
+            raise AssertionError("spawn mode must not run when attach is available")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _spawn_should_not_run)
+        payload = {"id": "x1", "label": "Foo", "type": "OperationalActivity"}
+        monkeypatch.setattr(bridge.time, "sleep", self._fake_listener_writes(requests_dir, payload))
+
+        assert bridge.get_element("demo.aird", "x1") == payload
+
+    def test_get_element_prefers_attach_over_fast_reader(self, models_root, tmp_path, monkeypatch):
+        """Regression: attach must be tried BEFORE fast_reader for reads --
+        fast_reader only ever sees the last *saved* disk state, so if it
+        ran first (and, as it normally would, succeeded) it would silently
+        shadow attach forever and the user's live unsaved GUI edits would
+        never be visible through the MCP. This is exactly the ordering
+        that broke when fast_reader.py's dispatcher functions and attach
+        mode's _dispatch() were first merged together."""
+        attach_root = tmp_path / "attach"
+        monkeypatch.setattr(bridge, "ATTACH_ROOT", attach_root)
+        abs_path = (models_root / "demo.aird").resolve()
+        workspace_dir = self._fresh_heartbeat(attach_root, [str(abs_path)])
+        requests_dir = workspace_dir / "requests"
+
+        def _fast_reader_should_not_run(*_a, **_kw):
+            raise AssertionError("fast_reader must not run when attach is available")
+
+        monkeypatch.setattr(bridge.fast_reader, "get_element", _fast_reader_should_not_run)
+        payload = {"id": "x1", "label": "Foo", "type": "OperationalActivity"}
+        monkeypatch.setattr(bridge.time, "sleep", self._fake_listener_writes(requests_dir, payload))
+
+        assert bridge.get_element("demo.aird", "x1") == payload
