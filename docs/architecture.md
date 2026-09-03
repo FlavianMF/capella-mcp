@@ -91,6 +91,11 @@ Tools (ações, leitura + escrita):
   conseguem checar diagramas existentes antes de criar um novo)
 - `get_diagram(model_path, diagram_uid)` — duplica o resource
   `.../diagram/{diagram_uid}` como tool, mesmo motivo
+- `add_to_diagram(model_path, diagram_uid, element_id, parent_element_id=None)`
+  — adiciona um elemento já existente a um diagrama já existente sem
+  recriar (`create_*_diagram` sempre cria de novo, duplicando); dispatch em
+  `Diagram.get_type()` para as 4 famílias (breakdown/container/class/
+  capability), scenario recusa explicitamente
 - `create_element(model_path, layer, type, name, parent_id, attributes={})`
 - `update_element(model_path, element_id, attributes)`
 - `create_diagram(model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth)`

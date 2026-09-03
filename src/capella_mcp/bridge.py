@@ -861,7 +861,17 @@ def _list_elements_headless(model_path: str, layer: str, type_filter: str | None
                 type_cls = globals().get(type_filter)
                 if type_cls is None:
                     raise NameError(f"unknown Capella element type: {{type_filter}}")
-                elements = layer_obj.get_all_contents_by_type(type_cls)
+                # get_all_contents_by_type uses isinstance, but python4capella's
+                # OperationalEntity/OperationalActor are two Python classes over
+                # the same EMF "Entity" class, with OperationalEntity a Python
+                # subclass of OperationalActor -- isinstance(pure_entity,
+                # OperationalActor) is True, so an "OperationalActor" filter
+                # would silently include non-actor Entities. Exact class-name
+                # match instead of isinstance keeps the filter precise.
+                elements = [
+                    el for el in layer_obj.get_all_contents_by_type(type_cls)
+                    if type(el).__name__ == type_filter
+                ]
             else:
                 elements = layer_obj.get_contents()
             _write_result({{"elements": [_serialize(el) for el in elements]}})
@@ -2669,6 +2679,344 @@ def create_scenario_diagram(
         "diagram_name": pass2["diagram_name"],
         "node_count": node_count,
         "edge_count": pass2["edge_count"],
+    }
+
+
+# add_to_diagram: reverse lookup from Diagram.get_type() (the
+# RepresentationDescription name, same string already stored as
+# cfg["diagram"] in BREAKDOWN_DIAGRAMS/CONTAINER_DIAGRAMS -- confirmed live,
+# get_java_object().getDescription().getName()) back to the config needed to
+# add ONE new node to an already-open diagram. Collapsing on that name
+# instead of (layer, type_name) is safe here because every (layer,
+# type_name) pair that shares a name shares an identical cfg (OA
+# Entity/Actor's breakdown and blank entries both do -- see their own
+# comments above).
+_BREAKDOWN_DIAGRAMS_BY_NAME = {cfg["diagram"]: cfg for cfg in BREAKDOWN_DIAGRAMS.values()}
+_CONTAINER_DIAGRAMS_BY_NAME = {cfg["diagram"]: cfg for cfg in CONTAINER_DIAGRAMS.values()}
+_SCENARIO_DIAGRAM_NAMES = {cfg["diagram"] for cfg in _SCENARIO_DIAGRAM_MAPPINGS.values()}
+
+
+def add_to_diagram(
+    model_path: str, diagram_uid: str, element_id: str, parent_element_id: str | None = None
+) -> dict:
+    """Add an existing model element to an existing diagram without
+    recreating the diagram or touching any node already in it -- see
+    tools/model_tools.py's add_to_diagram docstring for the full per-family
+    contract exposed to callers.
+
+    Two-pass like every other diagram-mutating function in this module:
+    pass 1 resolves the diagram (by uid, same scan as get_diagram/
+    delete_diagram/layout_diagram) and the element (by id, scanning every
+    layer the way _get_element_headless does), dispatches on
+    Diagram.get_type() against the reverse-lookup dicts above, creates the
+    node (+ involvement edges for the capability family, mirroring
+    create_capability_diagram's own default behavior) and saves. Pass 2
+    reopens (GMF notation views only materialize after save()+reopen, same
+    constraint as create_diagram/create_container_diagram/etc.) to position
+    the new node past the diagram's (or its new parent's) current bounding
+    box -- existing nodes are never moved -- and saves again.
+    """
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+
+    pass1_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            target_uid = {diagram_uid!r}
+            target_element_id = {element_id!r}
+            parent_element_id = {parent_element_id!r}
+
+            found = None
+            for d in model.get_all_diagrams():
+                if d.get_uid() == target_uid:
+                    found = d
+                    break
+            if found is None:
+                raise ValueError(f"diagram not found: {{target_uid}}")
+            diagram_type = found.get_type()
+
+            se = model.get_system_engineering()
+            el = None
+            for method_name in {list(LAYER_METHODS.values())!r}:
+                layer_obj = getattr(se, method_name)()
+                if layer_obj is None:
+                    continue
+                for candidate in layer_obj.get_all_contents() if hasattr(layer_obj, "get_all_contents") else []:
+                    if _element_id(candidate) == target_element_id:
+                        el = candidate
+                        break
+                if el is not None:
+                    break
+            if el is None:
+                raise ValueError(f"element not found: {{target_element_id}}")
+            type_name = type(el).__name__
+            label = (el.get_label() if hasattr(el, "get_label") else None) or target_element_id
+
+            java_diag = found.get_java_object().getRepresentation()
+
+            existing_dnodes = {{}}
+            existing_kinds = {{}}
+
+            def _collect(de):
+                if de.eClass().getName() != "DEdge":
+                    tid = de.getTarget().getId()
+                    existing_dnodes[tid] = de
+                    existing_kinds[tid] = de.eClass().getName()
+                    if de.eClass().getName() == "DNodeContainer":
+                        for child in de.getOwnedDiagramElements():
+                            _collect(child)
+
+            for de in java_diag.getOwnedDiagramElements():
+                _collect(de)
+
+            if target_element_id in existing_dnodes:
+                _write_result({{"already_present": True, "diagram_uid": target_uid, "element_id": target_element_id}})
+            elif diagram_type in {_SCENARIO_DIAGRAM_NAMES!r}:
+                raise ValueError(
+                    f"add_to_diagram does not support scenario diagrams ({{diagram_type}}) -- "
+                    "their content is ordered InstanceRoles/SequenceMessages, build via create_element instead"
+                )
+            elif diagram_type in {_BREAKDOWN_DIAGRAMS_BY_NAME!r}:
+                if parent_element_id:
+                    raise ValueError("breakdown diagrams are flat (NodeMapping) -- parent_element_id is not applicable")
+                cfg = {_BREAKDOWN_DIAGRAMS_BY_NAME!r}[diagram_type]
+                root_el = found.get_target()
+                if root_el is None:
+                    raise ValueError("breakdown diagram has no target root element")
+                root_id = _element_id(root_el)
+                if target_element_id == root_id:
+                    raise ValueError("the diagram's own root element is never shown as a node in a breakdown diagram")
+
+                descendant_ids = set()
+
+                def _walk(node):
+                    children_method = cfg["children_method"]
+                    if hasattr(node, children_method):
+                        for child in getattr(node, children_method)():
+                            descendant_ids.add(_element_id(child))
+                            _walk(child)
+
+                _walk(root_el)
+                if target_element_id not in descendant_ids:
+                    raise ValueError(
+                        f"element {{target_element_id}} is not a descendant of this breakdown diagram's root ({{root_id}})"
+                    )
+
+                repDef = get_representation_definition_by_name(model.session, cfg["diagram"])
+                nodeMapping = get_representation_mapping_by_name(repDef, cfg["node_mapping"])
+                model.start_transaction()
+                try:
+                    apply_mapping(java_diag, nodeMapping, el.get_java_object())
+                    model.commit_transaction()
+                except Exception:
+                    model.rollback_transaction()
+                    raise
+                model.save()
+                _write_result({{
+                    "added": True, "diagram_uid": target_uid, "element_id": target_element_id,
+                    "family": "breakdown", "label": label,
+                }})
+            elif diagram_type in {_CONTAINER_DIAGRAMS_BY_NAME!r}:
+                cfg = {_CONTAINER_DIAGRAMS_BY_NAME!r}[diagram_type]
+                container_java = java_diag
+                if parent_element_id:
+                    parent_dnode = existing_dnodes.get(parent_element_id)
+                    if parent_dnode is None or existing_kinds.get(parent_element_id) != "DNodeContainer":
+                        raise ValueError(f"parent_element_id is not a container currently placed in this diagram: {{parent_element_id}}")
+                    container_java = parent_dnode
+                repDef = get_representation_definition_by_name(model.session, cfg["diagram"])
+                containerMapping = get_representation_mapping_by_name(repDef, cfg["container_mapping"])
+                diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+                model.start_transaction()
+                try:
+                    dnode = diagram_services.createContainer(containerMapping, el.get_java_object(), container_java, java_diag)
+                    if dnode is None:
+                        raise ValueError(f"{{type_name}} is not a valid element for diagram type {{diagram_type}}")
+                    model.commit_transaction()
+                except Exception:
+                    model.rollback_transaction()
+                    raise
+                model.save()
+                _write_result({{
+                    "added": True, "diagram_uid": target_uid, "element_id": target_element_id,
+                    "family": "container", "label": label,
+                }})
+            elif diagram_type == {_CLASS_DIAGRAM_NAME!r}:
+                if type_name not in ("DataPkg", "Class"):
+                    raise ValueError(f"Class Diagram Blank only accepts DataPkg/Class elements, got {{type_name}}")
+                container_java = java_diag
+                if parent_element_id:
+                    parent_dnode = existing_dnodes.get(parent_element_id)
+                    if parent_dnode is None or existing_kinds.get(parent_element_id) != "DNodeContainer":
+                        raise ValueError(f"parent_element_id is not a container currently placed in this diagram: {{parent_element_id}}")
+                    container_java = parent_dnode
+                elif type_name == "Class":
+                    raise ValueError("Class elements must nest inside a DataPkg already in this diagram -- pass parent_element_id")
+                repDef = get_representation_definition_by_name(model.session, {_CLASS_DIAGRAM_NAME!r})
+                mapping_name = {_CLASS_DIAGRAM_PKG_MAPPING!r} if type_name == "DataPkg" else {_CLASS_DIAGRAM_CLASS_MAPPING!r}
+                mapping = get_representation_mapping_by_name(repDef, mapping_name)
+                diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+                model.start_transaction()
+                try:
+                    dnode = diagram_services.createContainer(mapping, el.get_java_object(), container_java, java_diag)
+                    if dnode is None:
+                        raise ValueError(f"{{type_name}} is not a valid element for this Class Diagram Blank")
+                    model.commit_transaction()
+                except Exception:
+                    model.rollback_transaction()
+                    raise
+                model.save()
+                _write_result({{
+                    "added": True, "diagram_uid": target_uid, "element_id": target_element_id,
+                    "family": "class", "label": label,
+                }})
+            elif diagram_type == {_CAPABILITY_DIAGRAM_NAME!r}:
+                if type_name not in ("OperationalEntity", "OperationalActor", "OperationalCapability"):
+                    raise ValueError(
+                        "Operational Capabilities Blank only accepts OperationalEntity/OperationalActor/"
+                        f"OperationalCapability elements, got {{type_name}}"
+                    )
+                repDef = get_representation_definition_by_name(model.session, {_CAPABILITY_DIAGRAM_NAME!r})
+                diagram_services = org.polarsys.capella.core.sirius.analysis.DiagramServices.getDiagramServices()
+                involvementMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_INVOLVEMENT_MAPPING!r})
+                model.start_transaction()
+                try:
+                    if type_name in ("OperationalEntity", "OperationalActor"):
+                        entityMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_ENTITY_MAPPING!r})
+                        container_java = java_diag
+                        if parent_element_id:
+                            parent_dnode = existing_dnodes.get(parent_element_id)
+                            if parent_dnode is None or existing_kinds.get(parent_element_id) != "DNodeContainer":
+                                raise ValueError(f"parent_element_id is not a container currently placed in this diagram: {{parent_element_id}}")
+                            container_java = parent_dnode
+                        dnode = diagram_services.createContainer(entityMapping, el.get_java_object(), container_java, java_diag)
+                        if dnode is None:
+                            raise ValueError(f"{{type_name}} is not a valid element for Operational Capabilities Blank")
+                        # Mirror create_capability_diagram's own default: an
+                        # Entity/Actor added late still gets involvement
+                        # edges to whichever Capabilities are already
+                        # present in this diagram (never the reverse
+                        # direction here -- that's the elif branch below).
+                        if hasattr(el, "get_involving_operational_capabilities"):
+                            for cap in el.get_involving_operational_capabilities():
+                                cap_dnode = existing_dnodes.get(_element_id(cap))
+                                if cap_dnode is not None:
+                                    diagram_services.createEdge(involvementMapping, cap_dnode, dnode, cap.get_java_object())
+                    else:
+                        if parent_element_id:
+                            raise ValueError("OperationalCapability nodes are free (not nested) -- parent_element_id is not applicable")
+                        capabilityMapping = get_representation_mapping_by_name(repDef, {_CAPABILITY_NODE_MAPPING!r})
+                        dnode = diagram_services.createNode(capabilityMapping, el.get_java_object(), java_diag, java_diag)
+                        if dnode is None:
+                            raise ValueError("OperationalCapability is not a valid element for Operational Capabilities Blank")
+                        # Reverse direction: a Capability added late gets
+                        # involvement edges to whichever Entities/Actors
+                        # already involve it are already present.
+                        if hasattr(el, "get_involved_entities"):
+                            for entity in el.get_involved_entities():
+                                entity_dnode = existing_dnodes.get(_element_id(entity))
+                                if entity_dnode is not None:
+                                    diagram_services.createEdge(involvementMapping, dnode, entity_dnode, el.get_java_object())
+                    model.commit_transaction()
+                except Exception:
+                    model.rollback_transaction()
+                    raise
+                model.save()
+                _write_result({{
+                    "added": True, "diagram_uid": target_uid, "element_id": target_element_id,
+                    "family": "capability", "label": label,
+                }})
+            else:
+                raise ValueError(f"unsupported diagram type for add_to_diagram: {{diagram_type}}")
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass1 = _run_script(pass1_body)
+    if pass1.get("already_present"):
+        return pass1
+
+    # Pass 2 (reopen): the new node's GMF notation view only exists now --
+    # position it past the diagram's (or its new parent's) current bounding
+    # box, using the same sizing constants _layout_tree uses elsewhere.
+    # Existing nodes are never moved.
+    pass2_body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            target_uid = {diagram_uid!r}
+            target_element_id = {element_id!r}
+            parent_element_id = {parent_element_id!r}
+
+            found = None
+            for d in model.get_all_diagrams():
+                if d.get_uid() == target_uid:
+                    found = d
+                    break
+            if found is None:
+                raise ValueError(f"diagram not found after pass 1: {{target_uid}}")
+            java_diag = found.get_java_object().getRepresentation()
+
+            by_target_id = {{}}
+
+            def _collect(de):
+                if de.eClass().getName() != "DEdge":
+                    by_target_id[de.getTarget().getId()] = de
+                    if de.eClass().getName() == "DNodeContainer":
+                        for child in de.getOwnedDiagramElements():
+                            _collect(child)
+
+            for de in java_diag.getOwnedDiagramElements():
+                _collect(de)
+
+            new_dnode = by_target_id.get(target_element_id)
+            if new_dnode is None:
+                raise ValueError(f"node not found after pass 1 save+reopen: {{target_element_id}}")
+
+            parent_dnode = by_target_id.get(parent_element_id) if parent_element_id else None
+            siblings = parent_dnode.getOwnedDiagramElements() if parent_dnode is not None else java_diag.getOwnedDiagramElements()
+            sibling_bounds = []
+            for de in siblings:
+                if de.eClass().getName() != "DEdge" and de.getTarget().getId() != target_element_id:
+                    b = get_bounds(de)
+                    if b is not None:
+                        sibling_bounds.append(b)
+
+            width = max({_MIN_WIDTH!r}, min({_MAX_WIDTH!r}, len({pass1["label"]!r}) * {_CHAR_WIDTH_PX!r} + {_PADDING_X!r}))
+            height = {_NODE_HEIGHT!r}
+            if sibling_bounds:
+                x = max(b[0] + b[2] for b in sibling_bounds) + {_HORIZONTAL_GAP!r}
+                y = min(b[1] for b in sibling_bounds)
+            else:
+                x = 0
+                y = 0
+
+            model.start_transaction()
+            try:
+                set_bounds(new_dnode, [x, y, width, height])
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            node_count = len(by_target_id)
+            edge_count = sum(1 for de in java_diag.getOwnedDiagramElements() if de.eClass().getName() == "DEdge")
+            _write_result({{
+                "diagram_uid": found.get_uid(),
+                "diagram_name": found.get_name(),
+                "node_count": node_count,
+                "edge_count": edge_count,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    pass2 = _run_script(pass2_body)
+    return {
+        "added": True,
+        "family": pass1["family"],
+        "element_id": element_id,
+        **pass2,
     }
 
 

@@ -53,6 +53,60 @@ def register(mcp: MCPServer) -> None:
         return bridge.get_diagram(model_path, diagram_uid)
 
     @mcp.tool()
+    def add_to_diagram(
+        model_path: str, diagram_uid: str, element_id: str, parent_element_id: str | None = None
+    ) -> dict:
+        """Add an existing model element to an existing diagram, without
+        recreating the diagram or touching any node already in it.
+
+        Use this right after create_element when the new element should be
+        visible somewhere the user already looks -- create_element itself
+        never touches any diagram, and every create_*_diagram tool always
+        (re)creates a brand new diagram (duplicating, not updating, if one
+        with that content already exists). Call list_diagrams first to find
+        a candidate diagram_uid.
+
+        diagram_uid must be an existing diagram. element_id must already
+        exist in the model and be a type this diagram's Sirius mapping
+        accepts:
+          - Breakdown diagrams (create_diagram): element_id must be a
+            descendant of THIS diagram's own root -- parent_element_id is
+            not applicable (breakdown diagrams are flat, never nested).
+            Capella auto-synchronizes a breakdown diagram's DIRECT children
+            on every save regardless of this call -- add_to_diagram mainly
+            matters here for elements beyond the diagram's original
+            max_depth, or added after the diagram already existed.
+          - Container/Class/Capability Blank diagrams
+            (create_container_diagram, create_class_diagram,
+            create_capability_diagram): element_id must match the diagram's
+            accepted types (Entity/Actor, DataPkg/Class, or
+            Entity/Actor/OperationalCapability respectively). Adding an
+            Entity/Actor or OperationalCapability to an Operational
+            Capabilities Blank also auto-creates involvement edges to
+            whichever of the other kind are already present in the diagram
+            (mirrors create_capability_diagram's own default). Class
+            elements must pass parent_element_id (an existing DataPkg node
+            in this diagram); parent_element_id is optional for
+            DataPkg/Entity/Actor (omit to add as a new top-level node), and
+            not applicable for OperationalCapability (always a free node).
+          - Scenario diagrams (create_scenario_diagram) are NOT supported --
+            their content is ordered InstanceRoles/SequenceMessages, not
+            simple containment; build them via create_element instead.
+
+        Any unsupported (diagram_type, element_type) combination raises an
+        error naming exactly what's wrong -- never silently returns success
+        without the element actually appearing. If element_id is already
+        present, returns {"already_present": true, ...} instead of
+        duplicating.
+
+        Only positions the NEW node (appended past the diagram's current
+        bounding box) -- existing nodes are never moved. Call
+        layout_diagram afterward if you want the whole diagram rearranged.
+        """
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.add_to_diagram(model_path, diagram_uid, element_id, parent_element_id)
+
+    @mcp.tool()
     def create_element(
         model_path: str,
         layer: str,
@@ -94,6 +148,10 @@ def register(mcp: MCPServer) -> None:
         type_name silently fails to persist -- the call returns success
         with a valid id, but the element never actually appears in the
         model on a later call.
+
+        A newly created element never appears in any diagram by itself --
+        call list_diagrams and then add_to_diagram(diagram_uid, element_id)
+        to make it visible somewhere the user already looks.
         """
         with bridge.model_lock(bridge.resolve_model_path(model_path)):
             return bridge.create_element(model_path, layer, type_name, name, parent_id, attributes)

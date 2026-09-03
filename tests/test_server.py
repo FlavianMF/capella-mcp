@@ -15,6 +15,7 @@ def test_all_v1_tools_registered():
         "get_element",
         "list_diagrams",
         "get_diagram",
+        "add_to_diagram",
         "create_element",
         "update_element",
         "create_diagram",

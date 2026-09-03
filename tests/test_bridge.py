@@ -758,6 +758,102 @@ class TestCreateScenarioDiagram:
         assert "Basic message mapping AIS" in captured["scripts"][1]
 
 
+class TestAddToDiagram:
+    """add_to_diagram dispatches on Diagram.get_type() at Jython runtime, so
+    unlike the create_*_diagram tests above, a single generated pass-1
+    script always contains every family's branch (breakdown/container/
+    class/capability/scenario-reject) -- these tests check that the
+    generated scripts compile and reference the right APIs unconditionally,
+    and that the Python driver threads pass 1's result into pass 2 and the
+    final return value correctly. The actual per-family dispatch logic only
+    runs inside a real headless Capella process, exercised by
+    test_integration.py instead."""
+
+    def _mock_sequence(self, monkeypatch, results):
+        captured = {"scripts": []}
+        results_iter = iter(results)
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["scripts"].append(script)
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps(next(results_iter)))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+        return captured
+
+    def test_two_pass_round_trip(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {
+            "added": True,
+            "diagram_uid": "diag-1",
+            "element_id": "elem-1",
+            "family": "capability",
+            "label": "Robozin",
+        }
+        pass2_result = {
+            "diagram_uid": "diag-1",
+            "diagram_name": "OCB Test",
+            "node_count": 3,
+            "edge_count": 2,
+        }
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        result = bridge.add_to_diagram("demo.aird", "diag-1", "elem-1")
+
+        assert result == {
+            "added": True,
+            "family": "capability",
+            "element_id": "elem-1",
+            "diagram_uid": "diag-1",
+            "diagram_name": "OCB Test",
+            "node_count": 3,
+            "edge_count": 2,
+        }
+        assert len(captured["scripts"]) == 2
+        # pass 1's label must thread into pass 2's bounds-sizing code, not
+        # get re-derived from the raw GMF target (which has no .get_label()).
+        assert '"Robozin"' in captured["scripts"][1] or "'Robozin'" in captured["scripts"][1]
+        # unconditional regression guards: the single generated script must
+        # reference every family's technology, since dispatch happens at
+        # Jython runtime, not at Python script-generation time.
+        script0 = captured["scripts"][0]
+        assert "DiagramServices.getDiagramServices()" in script0
+        assert "diagram_services.createContainer" in script0
+        assert "diagram_services.createNode" in script0
+        assert "diagram_services.createEdge" in script0
+        assert "apply_mapping" in script0
+        assert "get_involving_operational_capabilities" in script0
+        assert "get_involved_entities" in script0
+        assert "Operational Interaction Scenario" in script0
+        assert "Activity Interaction Scenario" in script0
+        assert "set_bounds" in captured["scripts"][1]
+        assert "get_bounds" in captured["scripts"][1]
+
+    def test_already_present_short_circuits_before_pass_2(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {"already_present": True, "diagram_uid": "diag-1", "element_id": "elem-1"}
+        captured = self._mock_sequence(monkeypatch, [pass1_result])
+        result = bridge.add_to_diagram("demo.aird", "diag-1", "elem-1")
+
+        assert result == pass1_result
+        assert len(captured["scripts"]) == 1
+
+    def test_parent_element_id_threads_through_both_passes(self, models_root, workspace_root, monkeypatch):
+        pass1_result = {
+            "added": True,
+            "diagram_uid": "diag-1",
+            "element_id": "elem-1",
+            "family": "class",
+            "label": "MyClass",
+        }
+        pass2_result = {"diagram_uid": "diag-1", "diagram_name": "CDB Test", "node_count": 4, "edge_count": 0}
+        captured = self._mock_sequence(monkeypatch, [pass1_result, pass2_result])
+        bridge.add_to_diagram("demo.aird", "diag-1", "elem-1", parent_element_id="pkg-1")
+
+        assert "'pkg-1'" in captured["scripts"][0]
+        assert "'pkg-1'" in captured["scripts"][1]
+
+
 class TestLayoutDiagram:
     """layout_diagram applies Capella's native 'Layout > All' to an existing
     diagram via GMF's OffscreenEditPartFactory + ArrangeRequest (single

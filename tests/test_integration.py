@@ -99,6 +99,27 @@ def test_create_functional_exchange_round_trips():
 
 
 @pytest.mark.skipif(_car_hmi_missing, reason="tests/fixtures/car_hmi/car_hmi.aird missing")
+def test_list_elements_actor_filter_excludes_pure_entities():
+    """Regression guard for notes/analysis/bug_list_elements_type_filter.md:
+    type_filter="OperationalActor" used to also return non-actor Entities,
+    because _list_elements_headless resolved the filter via isinstance()
+    against python4capella's own (unrelated to the real EMF metamodel)
+    OperationalEntity-is-a-Python-subclass-of-OperationalActor wrapper
+    hierarchy. car_hmi.aird's "Motorista" has actor="true" in the raw XML;
+    "Veículo"/"Painel de Instrumentos" are plain Entities (no actor
+    attribute) -- the fix must keep the former in and the latter two out."""
+    actors = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalActor")
+    actor_labels = {e["label"] for e in actors["elements"]}
+    assert "Motorista" in actor_labels
+    assert "Veículo" not in actor_labels
+    assert "Painel de Instrumentos" not in actor_labels
+
+    entities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalEntity")
+    entity_labels = {e["label"] for e in entities["elements"]}
+    assert entity_labels == {"Veículo", "Painel de Instrumentos"}
+
+
+@pytest.mark.skipif(_car_hmi_missing, reason="tests/fixtures/car_hmi/car_hmi.aird missing")
 class TestDiagrams:
     """Round-trips against car_hmi.aird (has real OA entities/activities,
     unlike the plain demo.aird). Every created diagram is deleted again at
@@ -390,5 +411,66 @@ class TestDiagrams:
             match = [f for f in export["files"] if created["diagram_name"] in f]
             assert match, f"exported PNG not found for {created['diagram_name']!r} in {export['files']}"
             assert Path(match[0]).stat().st_size > 300
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
+    def test_add_to_diagram_container_family_new_node_renders(self):
+        """add_to_diagram (P7) against the container family (Operational
+        Entity Blank) -- the safest family to verify live since, unlike
+        breakdown diagrams, Blank diagrams are never auto-synchronized on
+        save (see create_container_diagram's pass 2 comment), so a newly
+        created entity is guaranteed absent from a diagram created before
+        it existed. Breakdown/class/capability-family add_to_diagram paths
+        are not yet exercised live here -- see notes/analysis/
+        proposals_llm_window_mcp.md's P7 entry for the flagged unverified
+        points, next up before those paths ship with confidence."""
+        diagram = bridge.create_container_diagram("car_hmi/car_hmi.aird", "oa", "OperationalEntity")
+        try:
+            before_count = diagram["node_count"]
+            new_entity = bridge.create_element(
+                "car_hmi/car_hmi.aird", "oa", "OperationalEntity", "Add To Diagram Test Entity",
+            )
+
+            result = bridge.add_to_diagram("car_hmi/car_hmi.aird", diagram["diagram_uid"], new_entity["id"])
+            assert result["added"] is True
+            assert result["family"] == "container"
+            assert result["node_count"] == before_count + 1
+
+            # idempotent: calling again must dedupe, never duplicate
+            again = bridge.add_to_diagram("car_hmi/car_hmi.aird", diagram["diagram_uid"], new_entity["id"])
+            assert again == {
+                "already_present": True,
+                "diagram_uid": diagram["diagram_uid"],
+                "element_id": new_entity["id"],
+            }
+
+            export = bridge.export_diagram("car_hmi/car_hmi.aird")
+            match = [f for f in export["files"] if diagram["diagram_name"] in f]
+            assert match, f"exported PNG not found for {diagram['diagram_name']!r} in {export['files']}"
+            assert Path(match[0]).stat().st_size > 300
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", diagram["diagram_uid"])
+
+    def test_add_to_diagram_scenario_diagram_raises(self):
+        capabilities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalCapability")
+        cap_id = capabilities["elements"][0]["id"]
+        entities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalEntity")
+        entity_ids = [e["id"] for e in entities["elements"]][:2]
+
+        scenario = bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "Scenario", "Add To Diagram Reject Scenario", parent_id=cap_id
+        )
+        ir_a = bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "InstanceRole", "A",
+            parent_id=scenario["id"], attributes={"represented_instance_id": entity_ids[0]},
+        )
+        bridge.create_element(
+            "car_hmi/car_hmi.aird", "oa", "InstanceRole", "B",
+            parent_id=scenario["id"], attributes={"represented_instance_id": entity_ids[1]},
+        )
+        created = bridge.create_scenario_diagram("car_hmi/car_hmi.aird", scenario["id"], scenario_kind="OES")
+        try:
+            with pytest.raises(bridge.BridgeError, match="does not support scenario diagrams"):
+                bridge.add_to_diagram("car_hmi/car_hmi.aird", created["diagram_uid"], ir_a["id"])
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
