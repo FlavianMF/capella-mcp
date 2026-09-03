@@ -2770,13 +2770,27 @@ def add_to_diagram(
             for de in java_diag.getOwnedDiagramElements():
                 _collect(de)
 
-            if target_element_id in existing_dnodes:
-                _write_result({{"already_present": True, "diagram_uid": target_uid, "element_id": target_element_id}})
-            elif diagram_type in {_SCENARIO_DIAGRAM_NAMES!r}:
+            # Unsupported diagram types (scenario, or anything this bridge
+            # doesn't otherwise recognize) must always raise -- checked
+            # BEFORE the already_present dedup below, since an element can
+            # coincidentally already be a DDiagramElement in an unsupported
+            # diagram (e.g. every InstanceRole already placed by
+            # create_scenario_diagram itself) without that making the
+            # diagram type any more supported.
+            if diagram_type in {_SCENARIO_DIAGRAM_NAMES!r}:
                 raise ValueError(
                     f"add_to_diagram does not support scenario diagrams ({{diagram_type}}) -- "
                     "their content is ordered InstanceRoles/SequenceMessages, build via create_element instead"
                 )
+            elif (
+                diagram_type not in {_BREAKDOWN_DIAGRAMS_BY_NAME!r}
+                and diagram_type not in {_CONTAINER_DIAGRAMS_BY_NAME!r}
+                and diagram_type != {_CLASS_DIAGRAM_NAME!r}
+                and diagram_type != {_CAPABILITY_DIAGRAM_NAME!r}
+            ):
+                raise ValueError(f"unsupported diagram type for add_to_diagram: {{diagram_type}}")
+            elif target_element_id in existing_dnodes:
+                _write_result({{"already_present": True, "diagram_uid": target_uid, "element_id": target_element_id}})
             elif diagram_type in {_BREAKDOWN_DIAGRAMS_BY_NAME!r}:
                 if parent_element_id:
                     raise ValueError("breakdown diagrams are flat (NodeMapping) -- parent_element_id is not applicable")
@@ -2927,8 +2941,8 @@ def add_to_diagram(
                     "added": True, "diagram_uid": target_uid, "element_id": target_element_id,
                     "family": "capability", "label": label,
                 }})
-            else:
-                raise ValueError(f"unsupported diagram type for add_to_diagram: {{diagram_type}}")
+            # No trailing else needed -- the guard clause above already
+            # rejects any diagram_type outside these four known families.
         except Exception as exc:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
