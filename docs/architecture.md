@@ -86,6 +86,11 @@ Tools (ações, leitura + escrita):
 - `list_layers(model_path)` — fast-path `capellambse` (ver [[0005-camada-leitura-capellambse]])
 - `list_elements(model_path, layer, type_filter=None)` — fast-path só com `type_filter`
 - `get_element(model_path, element_id)` — fast-path `capellambse`
+- `list_diagrams(model_path)` — duplica o resource `.../diagrams` como tool
+  (clientes que só chamam `ListTools`/`CallTool`, nunca resources, também
+  conseguem checar diagramas existentes antes de criar um novo)
+- `get_diagram(model_path, diagram_uid)` — duplica o resource
+  `.../diagram/{diagram_uid}` como tool, mesmo motivo
 - `create_element(model_path, layer, type, name, parent_id, attributes={})`
 - `update_element(model_path, element_id, attributes)`
 - `create_diagram(model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth)`
@@ -115,6 +120,8 @@ Tools (ações, leitura + escrita):
   (chain de reparo de ordering do próprio Sirius, ver comentário de
   `_SCENARIO_DIAGRAM_MAPPINGS`/`create_scenario_diagram` em `bridge.py`)
 - `delete_diagram(model_path, diagram_uid)`
+- `layout_diagram(model_path, diagram_uid)` — aplica o "Layout > All" nativo
+  do Sirius, com fallback pra um layout em árvore determinístico
 - `export_diagram(model_path, image_format="PNG")`
 
 Resources adicionais (diagramas):

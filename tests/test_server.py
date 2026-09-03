@@ -13,6 +13,8 @@ def test_all_v1_tools_registered():
         "list_layers",
         "list_elements",
         "get_element",
+        "list_diagrams",
+        "get_diagram",
         "create_element",
         "update_element",
         "create_diagram",

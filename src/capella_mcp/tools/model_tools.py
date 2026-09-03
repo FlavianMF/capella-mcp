@@ -37,6 +37,22 @@ def register(mcp: MCPServer) -> None:
         return bridge.get_element(model_path, element_id)
 
     @mcp.tool()
+    def list_diagrams(model_path: str) -> dict:
+        """List every diagram already saved in a Capella model, with uid, name
+        and diagram type -- check this before deciding whether to create a new
+        diagram or an existing one already satisfies the request.
+        """
+        return bridge.list_diagrams(model_path)
+
+    @mcp.tool()
+    def get_diagram(model_path: str, diagram_uid: str) -> dict:
+        """Get the elements currently placed in one existing diagram by uid
+        (from list_diagrams, or "diagram_uid"/"uid" returned by a previous
+        create_*_diagram call).
+        """
+        return bridge.get_diagram(model_path, diagram_uid)
+
+    @mcp.tool()
     def create_element(
         model_path: str,
         layer: str,
@@ -102,10 +118,19 @@ def register(mcp: MCPServer) -> None:
         diagram_name: str | None = None,
         max_depth: int | None = None,
     ) -> dict:
-        """Create a real Capella (Sirius) breakdown diagram for one element's
+        """Create a real Capella (Sirius) breakdown diagram for ONE element's
         subtree and save the model -- fully automatic, including layout
         (python4capella has no auto-arrange, so bounds are computed and
         written explicitly).
+
+        Use this when the request is about the breakdown/hierarchy of one
+        specific element and its children -- NOT for "show all X in the
+        layer" as a whole set (use create_container_diagram), not for an
+        overview with Operational Capabilities (use
+        create_capability_diagram), and not for an exact subset of elements
+        or an interaction between them (use create_scenario_diagram). Call
+        list_diagrams first to check a suitable diagram doesn't already
+        exist.
 
         layer must be one of: oa, sa, la, pa, epbs. Supported (layer,
         type_name) combinations: OperationalActivity/oa, OperationalEntity/oa,
@@ -138,6 +163,13 @@ def register(mcp: MCPServer) -> None:
         the ContainerMapping-based diagram family, distinct from
         create_diagram's NodeMapping-based "breakdown" trees.
 
+        Use this when the request is "show all Entities/Actors/Activities of
+        the layer" as a whole set -- always includes every root-level
+        element of that type, cannot filter to a subset. For "only X and Y",
+        use create_scenario_diagram instead; for one element's own subtree,
+        use create_diagram. Call list_diagrams first to check a suitable
+        diagram doesn't already exist.
+
         layer must be one of: oa, sa, la, pa, epbs. Supported (layer,
         type_name) combinations: OperationalEntity/oa and OperationalActor/oa
         ("Operational Entity Blank" -- containment only, no edges) and
@@ -168,6 +200,11 @@ def register(mcp: MCPServer) -> None:
         model, rooted at the layer's own default DataPkg -- recurses through
         nested DataPkgs and every Class owned along the way.
 
+        Use this only for the data model (DataPkg/Class) -- never for
+        Entities, Actors, Activities, Functions or Components; none of the
+        other 4 diagram tools cover DataPkg/Class. Call list_diagrams first
+        to check a suitable diagram doesn't already exist.
+
         layer must be one of: oa, sa, la, pa, epbs (every layer has a
         DataPkg). To populate it first, create_element supports type_name
         "DataPkg" (parent_id = an existing DataPkg) and "Class" (parent_id =
@@ -184,6 +221,14 @@ def register(mcp: MCPServer) -> None:
     def create_capability_diagram(model_path: str, diagram_name: str | None = None) -> dict:
         """Create a real Capella (Sirius) "Operational Capabilities Blank"
         (OCB) diagram and save the model.
+
+        Use this for an OA overview of Entities/Actors together with their
+        Operational Capabilities -- it overlaps with
+        create_container_diagram's OperationalEntity/Actor combo but
+        additionally nests each entity's involved capabilities inside its
+        container; use create_container_diagram instead if capabilities
+        don't need to be shown. Call list_diagrams first to check a
+        suitable diagram doesn't already exist.
 
         OA-layer only. Covers the whole forest of root Operational
         Entities/Actors (like create_container_diagram's OperationalEntity
@@ -206,6 +251,15 @@ def register(mcp: MCPServer) -> None:
         """Create a real Capella (Sirius) sequence/scenario diagram and save
         the model -- OES ("Operational Interaction Scenario") or OAS
         ("Activity Interaction Scenario"), OA-layer only.
+
+        Use this when the request names an EXACT subset of elements to
+        appear together (e.g. "only X and Y"), or an interaction/sequence
+        between them -- this is the only diagram tool that can restrict
+        which elements are shown, at the cost of first building a
+        Scenario/InstanceRoles/SequenceMessages via create_element (see that
+        tool's docstring). For the whole set of a type, use
+        create_container_diagram instead. Call list_diagrams first to check
+        a suitable diagram doesn't already exist.
 
         scenario_id must be an existing Scenario -- build it, its
         InstanceRoles, and its SequenceMessages first via create_element
