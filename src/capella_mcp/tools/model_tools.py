@@ -321,9 +321,15 @@ def register(mcp: MCPServer) -> None:
 
         scenario_id must be an existing Scenario -- build it, its
         InstanceRoles, and its SequenceMessages first via create_element
-        (see that tool's docstring). scenario_kind is "OES" (default,
-        InstanceRoles represent Entities/Actors) or "OAS" (InstanceRoles
-        represent OperationalActivities).
+        (see that tool's docstring); a Scenario itself requires an existing
+        OperationalCapability as parent_id. If no OperationalCapability
+        exists yet in the layer, building one just as scaffolding for the
+        Scenario is a structural side effect beyond what was explicitly
+        asked -- prefer confirming with the user (via ask_user_question, if
+        available) before creating it, rather than deciding silently.
+        scenario_kind is "OES" (default, InstanceRoles represent
+        Entities/Actors) or "OAS" (InstanceRoles represent
+        OperationalActivities).
 
         Renders correctly in export_diagram's headless PNG (see the
         _SCENARIO_DIAGRAM_MAPPINGS/create_scenario_diagram comment in
