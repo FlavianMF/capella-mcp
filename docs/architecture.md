@@ -96,6 +96,11 @@ Tools (ações, leitura + escrita):
   recriar (`create_*_diagram` sempre cria de novo, duplicando); dispatch em
   `Diagram.get_type()` para as 4 famílias (breakdown/container/class/
   capability), scenario recusa explicitamente
+- `remove_from_diagram(model_path, diagram_uid, element_id)` — remove um nó
+  (e seus filhos aninhados/edges conectadas) de um diagrama já existente sem
+  apagar o elemento do modelo; só container/class/capability — breakdown
+  recusa (Capella re-sincroniza filhos diretos a cada save) e scenario
+  recusa (mesmo motivo estrutural de `add_to_diagram`)
 - `create_element(model_path, layer, type, name, parent_id, attributes={})`
 - `update_element(model_path, element_id, attributes)`
 - `create_diagram(model_path, layer, type_name, root_id, include_relations, diagram_name, max_depth)`

@@ -854,6 +854,68 @@ class TestAddToDiagram:
         assert "'pkg-1'" in captured["scripts"][1]
 
 
+class TestRemoveFromDiagram:
+    """remove_from_diagram is single-pass (unlike add_to_diagram) -- deleting
+    a DDiagramElement takes effect on the same live java_diag object
+    immediately after commit+save, no reopen needed (confirmed live against
+    tests/fixtures/car_hmi/car_hmi.aird, see bridge.py's docstring on this
+    function). Same unconditional-script caveat as TestAddToDiagram: dispatch
+    happens at Jython runtime, so one generated script always contains every
+    family's rejection/acceptance branch."""
+
+    def test_single_pass_round_trip(self, models_root, workspace_root, monkeypatch):
+        result_data = {
+            "removed": True,
+            "diagram_uid": "diag-1",
+            "diagram_name": "OAB Test",
+            "element_id": "elem-1",
+            "edges_removed": 1,
+            "node_count": 2,
+            "edge_count": 0,
+        }
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run_writing(result_data))
+        result = bridge.remove_from_diagram("demo.aird", "diag-1", "elem-1")
+
+        assert result == result_data
+
+    def test_error_propagates_as_bridge_error(self, models_root, workspace_root, monkeypatch):
+        monkeypatch.setattr(
+            bridge, "_spawn_and_wait",
+            _run_writing({"error": "element is not currently placed in this diagram: elem-1", "traceback": "tb"}),
+        )
+        with pytest.raises(bridge.BridgeError, match="not currently placed"):
+            bridge.remove_from_diagram("demo.aird", "diag-1", "elem-1")
+
+    def test_generated_script_compiles_and_covers_every_family(self, models_root, workspace_root, monkeypatch):
+        captured = {"scripts": []}
+
+        def _run(cmd, capture_output, text, timeout):
+            call_dir = Path(cmd[cmd.index("-data") + 1])
+            script = (call_dir / bridge._SCRIPT_PROJECT_NAME / "script.py").read_text()
+            captured["scripts"].append(script)
+            compile(script, "<script>", "exec")
+            (call_dir / "result.json").write_text(json.dumps({"removed": True}))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+        bridge.remove_from_diagram("demo.aird", "diag-1", "elem-1")
+
+        script = captured["scripts"][0]
+        assert len(captured["scripts"]) == 1
+        # breakdown/scenario must be explicit rejections, never a silent
+        # fall-through to the delete path.
+        assert "does not support breakdown diagrams" in script
+        assert "does not support scenario diagrams" in script
+        assert "re-synchronizes a breakdown diagram's direct semantic children" in script
+        # regression guard: edges connected to the removed node must be
+        # deleted explicitly, not left dangling.
+        assert "edges_to_delete" in script
+        assert "getSourceNode" in script
+        assert "getTargetNode" in script
+        assert "delete(edge)" in script
+        assert "delete(target_dnode)" in script
+
+
 class TestLayoutDiagram:
     """layout_diagram applies Capella's native 'Layout > All' to an existing
     diagram via GMF's OffscreenEditPartFactory + ArrangeRequest (single

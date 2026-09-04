@@ -3034,6 +3034,142 @@ def add_to_diagram(
     }
 
 
+def remove_from_diagram(model_path: str, diagram_uid: str, element_id: str) -> dict:
+    """Remove an element's node from an existing diagram, WITHOUT deleting
+    the element from the model and WITHOUT recreating the diagram -- see
+    tools/model_tools.py's remove_from_diagram docstring for the full
+    contract exposed to callers.
+
+    Single pass (unlike add_to_diagram): confirmed live (2026-09-04, spike
+    against tests/fixtures/car_hmi/car_hmi.aird's nested Veiculo/Painel de
+    Instrumentos entities) that a raw EMF delete() -- reachable as a bare
+    global in every generated script via capella.py's own
+    include('../java_api/EMF_API.py') chain (EMF_API.py's delete()/deleteAll()
+    wrap org.eclipse.emf.ecore.util.EcoreUtil.delete()/.deleteAll()) --
+    takes effect on the SAME live java_diag object immediately after
+    commit+save, with no reopen needed (that constraint only applies to
+    NEWLY CREATED GMF views, which add_to_diagram's pass 2 exists for; a
+    removal has no new view to materialize). Also confirmed live: deleting
+    a DNodeContainer correctly cascades to every nested child (Painel de
+    Instrumentos disappeared along with its parent Veiculo), and the
+    underlying semantic model element is completely untouched (Veiculo
+    still fully present via get_element right after). Only NOT verified
+    live yet: edge cleanup (car_hmi's OAB test diagram has no edges) --
+    handled defensively below by explicitly deleting any DEdge connected to
+    the removed node/its descendants BEFORE deleting the node itself,
+    rather than relying on EcoreUtil's implicit cross-reference nulling to
+    also remove the now-dangling DEdge object.
+    """
+    abs_path = resolve_model_path(model_path)
+    workspace_path = _workspace_path_for_model(abs_path)
+    body = _diagram_include() + textwrap.dedent(f"""\
+        try:
+            model = CapellaModel()
+            model.open({workspace_path!r})
+            target_uid = {diagram_uid!r}
+            target_element_id = {element_id!r}
+
+            found = None
+            for d in model.get_all_diagrams():
+                if d.get_uid() == target_uid:
+                    found = d
+                    break
+            if found is None:
+                raise ValueError(f"diagram not found: {{target_uid}}")
+            diagram_type = found.get_type()
+
+            if diagram_type in {_SCENARIO_DIAGRAM_NAMES!r}:
+                raise ValueError(
+                    f"remove_from_diagram does not support scenario diagrams ({{diagram_type}}) -- "
+                    "their content is ordered InstanceRoles/SequenceMessages, not simple containment"
+                )
+            elif diagram_type in {_BREAKDOWN_DIAGRAMS_BY_NAME!r}:
+                raise ValueError(
+                    f"remove_from_diagram does not support breakdown diagrams ({{diagram_type}}) -- "
+                    "Capella re-synchronizes a breakdown diagram's direct semantic children on every "
+                    "save regardless of this call, so a node removed here would silently reappear on "
+                    "the next save of ANY tool in this session; use delete_diagram + create_diagram "
+                    "(with a lower max_depth, or excluding that subtree) instead"
+                )
+            elif (
+                diagram_type not in {_CONTAINER_DIAGRAMS_BY_NAME!r}
+                and diagram_type != {_CLASS_DIAGRAM_NAME!r}
+                and diagram_type != {_CAPABILITY_DIAGRAM_NAME!r}
+            ):
+                raise ValueError(f"unsupported diagram type for remove_from_diagram: {{diagram_type}}")
+
+            java_diag = found.get_java_object().getRepresentation()
+
+            existing_dnodes = {{}}
+
+            def _collect(de):
+                if de.eClass().getName() != "DEdge":
+                    existing_dnodes[de.getTarget().getId()] = de
+                    if de.eClass().getName() == "DNodeContainer":
+                        for child in de.getOwnedDiagramElements():
+                            _collect(child)
+
+            for de in java_diag.getOwnedDiagramElements():
+                _collect(de)
+
+            target_dnode = existing_dnodes.get(target_element_id)
+            if target_dnode is None:
+                raise ValueError(f"element is not currently placed in this diagram: {{target_element_id}}")
+
+            removed_ids = set()
+
+            def _collect_ids(de):
+                removed_ids.add(de.getTarget().getId())
+                if de.eClass().getName() == "DNodeContainer":
+                    for child in de.getOwnedDiagramElements():
+                        if child.eClass().getName() != "DEdge":
+                            _collect_ids(child)
+
+            _collect_ids(target_dnode)
+
+            # Edges are always direct children of java_diag itself (both
+            # apply_mapping() and DiagramServices.createEdge() add them
+            # there regardless of how deeply their endpoints are nested --
+            # see e.g. create_container_diagram's OAIB edge handling), so a
+            # flat scan here is sufficient, no recursion needed.
+            edges_to_delete = []
+            for de in java_diag.getOwnedDiagramElements():
+                if de.eClass().getName() == "DEdge":
+                    src = de.getSourceNode()
+                    tgt = de.getTargetNode()
+                    src_id = src.getTarget().getId() if src is not None and src.getTarget() is not None else None
+                    tgt_id = tgt.getTarget().getId() if tgt is not None and tgt.getTarget() is not None else None
+                    if src_id in removed_ids or tgt_id in removed_ids:
+                        edges_to_delete.append(de)
+
+            model.start_transaction()
+            try:
+                for edge in edges_to_delete:
+                    delete(edge)
+                delete(target_dnode)
+                model.commit_transaction()
+            except Exception:
+                model.rollback_transaction()
+                raise
+            model.save()
+
+            node_count = sum(1 for de in java_diag.getOwnedDiagramElements() if de.eClass().getName() != "DEdge")
+            edge_count = sum(1 for de in java_diag.getOwnedDiagramElements() if de.eClass().getName() == "DEdge")
+            _write_result({{
+                "removed": True,
+                "diagram_uid": target_uid,
+                "diagram_name": found.get_name(),
+                "element_id": target_element_id,
+                "edges_removed": len(edges_to_delete),
+                "node_count": node_count,
+                "edge_count": edge_count,
+            }})
+        except Exception as exc:
+            _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
+        """)
+    return _run_script(body)
+
+
 def list_diagrams(model_path: str) -> dict:
     abs_path = resolve_model_path(model_path)
     workspace_path = _workspace_path_for_model(abs_path)

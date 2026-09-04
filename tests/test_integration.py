@@ -474,3 +474,43 @@ class TestDiagrams:
                 bridge.add_to_diagram("car_hmi/car_hmi.aird", created["diagram_uid"], ir_a["id"])
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])
+
+    def test_remove_from_diagram_container_family_cascades_to_nested_children(self):
+        """remove_from_diagram (P8) against the container family --
+        "Veículo" (car_hmi.aird) nests "Painel de Instrumentos" as a real
+        Entity/sub-Entity pair, the exact structure a live spike (2026-09-04)
+        confirmed cascades correctly: deleting the parent DNodeContainer also
+        removes the nested child's DNodeContainer, while the underlying
+        semantic model elements (both Entities) stay completely untouched."""
+        diagram = bridge.create_container_diagram("car_hmi/car_hmi.aird", "oa", "OperationalEntity")
+        try:
+            entities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalEntity")
+            veiculo = next(e for e in entities["elements"] if e["label"] == "Veículo")
+            painel = next(e for e in entities["elements"] if e["label"] == "Painel de Instrumentos")
+            before_count = diagram["node_count"]
+
+            result = bridge.remove_from_diagram("car_hmi/car_hmi.aird", diagram["diagram_uid"], veiculo["id"])
+            assert result["removed"] is True
+            # Veículo (1) + its nested Painel de Instrumentos (1) both gone
+            assert result["node_count"] == before_count - 2
+
+            # semantic elements themselves are completely untouched
+            fetched_veiculo = bridge.get_element("car_hmi/car_hmi.aird", veiculo["id"])
+            assert fetched_veiculo["label"] == "Veículo"
+            fetched_painel = bridge.get_element("car_hmi/car_hmi.aird", painel["id"])
+            assert fetched_painel["label"] == "Painel de Instrumentos"
+
+            with pytest.raises(bridge.BridgeError, match="not currently placed"):
+                bridge.remove_from_diagram("car_hmi/car_hmi.aird", diagram["diagram_uid"], veiculo["id"])
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", diagram["diagram_uid"])
+
+    def test_remove_from_diagram_breakdown_diagram_raises(self):
+        activities = bridge.list_elements("car_hmi/car_hmi.aird", "oa", type_filter="OperationalActivity")
+        root = next(e for e in activities["elements"] if e["label"] == "Exibir velocidade do veículo")
+        created = bridge.create_diagram("car_hmi/car_hmi.aird", "oa", root_id=root["id"])
+        try:
+            with pytest.raises(bridge.BridgeError, match="does not support breakdown diagrams"):
+                bridge.remove_from_diagram("car_hmi/car_hmi.aird", created["diagram_uid"], root["id"])
+        finally:
+            bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])

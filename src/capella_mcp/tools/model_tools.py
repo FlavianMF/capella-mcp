@@ -107,6 +107,34 @@ def register(mcp: MCPServer) -> None:
             return bridge.add_to_diagram(model_path, diagram_uid, element_id, parent_element_id)
 
     @mcp.tool()
+    def remove_from_diagram(model_path: str, diagram_uid: str, element_id: str) -> dict:
+        """Remove an element's node from an existing diagram, WITHOUT
+        deleting the element from the model and WITHOUT recreating the
+        diagram.
+
+        NOT supported for breakdown diagrams (create_diagram) -- raises an
+        error explaining why: Capella re-synchronizes a breakdown diagram's
+        direct semantic children on every save regardless of this call, so
+        a node removed here would silently reappear on the next save of ANY
+        tool in this session. Use delete_diagram + create_diagram (with a
+        lower max_depth, or excluding that subtree) instead. NOT supported
+        for scenario diagrams either, same structural reason as
+        add_to_diagram (ordered InstanceRoles/SequenceMessages, not simple
+        containment).
+
+        Supported for Container/Class/Capability Blank diagrams
+        (create_container_diagram, create_class_diagram,
+        create_capability_diagram): removing a container also removes every
+        node nested inside it, and any diagram edge connected to the
+        removed node(s) is cleaned up too -- never left dangling.
+
+        Raises an error if element_id is not currently placed in this
+        diagram at all -- never a silent no-op.
+        """
+        with bridge.model_lock(bridge.resolve_model_path(model_path)):
+            return bridge.remove_from_diagram(model_path, diagram_uid, element_id)
+
+    @mcp.tool()
     def create_element(
         model_path: str,
         layer: str,
