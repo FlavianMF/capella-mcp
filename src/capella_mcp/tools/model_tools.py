@@ -33,7 +33,17 @@ def register(mcp: MCPServer) -> None:
 
     @mcp.tool()
     def get_element(model_path: str, element_id: str) -> dict:
-        """Get a single element by id from a Capella model."""
+        """Get a single element by id from a Capella model.
+
+        Returns {id, label, type} plus, when served by the fast reader,
+        "relations": a map of relation name -> [{id, label, type}] (e.g.
+        involved_entities, involved_capabilities, allocated_activities,
+        allocated_to, allocated_functions, exchanges, realized_functions,
+        realizing_components). Each list is capped at 25 items;
+        "relations_truncated" gives the full count for any capped list.
+        For full, depth-walked link sets use trace_element, list_exchanges,
+        find_references or impact_analysis.
+        """
         return bridge.get_element(model_path, element_id)
 
     @mcp.tool()

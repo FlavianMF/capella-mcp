@@ -31,7 +31,7 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from capella_mcp import fast_reader
+from capella_mcp import fast_reader, query
 
 logger = logging.getLogger(__name__)
 
@@ -925,6 +925,60 @@ def _get_element_headless(model_path: str, element_id: str) -> dict:
             _write_result({{"error": str(exc), "traceback": traceback.format_exc()}})
         """)
     return _dispatch(abs_path, body)
+
+
+def _run_query(model_path: str, fn, element_id, **kwargs) -> dict:
+    """PRD-09 query tools: capellambse only, read-only, no headless
+    fallback. A headless implementation would start a Capella process per
+    call (seconds to a minute) for a walk capellambse does in milliseconds
+    over the same saved files; the live Java tools in capella_llm_window
+    cover the open-session case. Like the other fast-path reads, this sees
+    the last *saved* state -- unsaved edits in an attached GUI are not
+    visible here."""
+    abs_path = resolve_model_path(model_path)
+    with model_lock(abs_path):
+        model = fast_reader._open(abs_path)
+        try:
+            return fn(model, element_id, **kwargs)
+        except (query.QueryError, fast_reader.NotFound) as exc:
+            raise BridgeError(str(exc)) from exc
+
+
+def find_references(
+    model_path: str, element_id: str, max_results: int | None = None, include_diagrams: bool = False
+) -> dict:
+    return _run_query(
+        model_path, query.find_references, element_id, max_results=max_results, include_diagrams=include_diagrams
+    )
+
+
+def trace_element(
+    model_path: str,
+    element_id: str,
+    relation: str = "all",
+    direction: str = "both",
+    max_depth: int | None = None,
+    max_results: int | None = None,
+) -> dict:
+    return _run_query(
+        model_path,
+        query.trace_element,
+        element_id,
+        relation=relation,
+        direction=direction,
+        max_depth=max_depth,
+        max_results=max_results,
+    )
+
+
+def list_exchanges(model_path: str, element_id: str, kind: str = "all", max_results: int | None = None) -> dict:
+    return _run_query(model_path, query.list_exchanges, element_id, kind=kind, max_results=max_results)
+
+
+def impact_analysis(
+    model_path: str, element_id: str, max_depth: int | None = None, max_results: int | None = None
+) -> dict:
+    return _run_query(model_path, query.impact_analysis, element_id, max_depth=max_depth, max_results=max_results)
 
 
 def create_element(

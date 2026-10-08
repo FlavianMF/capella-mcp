@@ -85,7 +85,12 @@ Resources (leitura, navegação):
 Tools (ações, leitura + escrita):
 - `list_layers(model_path)` — fast-path `capellambse` (ver [[0005-camada-leitura-capellambse]])
 - `list_elements(model_path, layer, type_filter=None)` — fast-path só com `type_filter`
-- `get_element(model_path, element_id)` — fast-path `capellambse`
+- `get_element(model_path, element_id)` — fast-path `capellambse`; quando
+  servido pelo fast-path, inclui `relations` (listas `{id,label,type}` por
+  relação: `involved_entities`, `allocated_to`, `exchanges`,
+  `allocated_functions`, `realized_*`/`realizing_*`...), cada lista limitada a
+  25 itens (`relations_truncated` dá o total quando corta). O fallback
+  headless/attach devolve só `{id,label,type}`
 - `list_diagrams(model_path)` — duplica o resource `.../diagrams` como tool
   (clientes que só chamam `ListTools`/`CallTool`, nunca resources, também
   conseguem checar diagramas existentes antes de criar um novo)
@@ -133,6 +138,29 @@ Tools (ações, leitura + escrita):
 - `layout_diagram(model_path, diagram_uid)` — aplica o "Layout > All" nativo
   do Sirius, com fallback pra um layout em árvore determinístico
 - `export_diagram(model_path, image_format="PNG")`
+
+Tools de consulta (PRD-09 do capella_llm_window; só leitura, limitadas,
+servidas só por `capellambse` -- sem fallback headless, enxergam o último
+estado *salvo*; ver `query.py` e `tools/query_tools.py`). Todas devolvem
+`{root: {id,label,type,layer}, items: [{id,label,type,layer,relation,direction,depth,viaId}], total, truncated}`,
+itens deduplicados por `(id, relation, direction)` e ordenados por
+profundidade, camada (OA, SA, LA, PA, EPBS, ""), tipo, label, id;
+`max_results` padrão 50 (1..200), `max_depth` padrão 2 (1..4):
+
+- `find_references(model_path, element_id, max_results=50, include_diagrams=False)`
+  — quem referencia o elemento por referência não-containment
+  (`relation` = nome do atributo `capellambse`); com `include_diagrams`,
+  itens `Diagram`/`shown_in`
+- `trace_element(model_path, element_id, relation="all", direction="both", max_depth=2, max_results=50)`
+  — segue `AbstractTrace` (`allocation` = classes `*Allocation`,
+  `realization` = `*Realization`); `relation` do item = nome da classe do
+  trace; `out` = elemento é a origem do trace
+- `list_exchanges(model_path, element_id, kind="all", max_results=50)`
+  — trocas (`functional`/`component`/`physical`) cuja origem/destino é o
+  elemento ou uma porta dele; `viaId` = elemento na outra ponta
+- `impact_analysis(model_path, element_id, max_depth=2, max_results=50)`
+  — `contained`, `referenced_by`, `trace`, `exchange`, `diagram` num só
+  resultado, mais `counts` por relação (antes do corte)
 
 Resources adicionais (diagramas):
 - `capella://{model_path}/diagrams`

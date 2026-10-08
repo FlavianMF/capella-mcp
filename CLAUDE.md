@@ -40,7 +40,9 @@ docker build -t capella-mcp .
 src/capella_mcp/
   server.py      # entry point, registra tools/resources (MCPServer)
   bridge.py       # invoca o Capella headless, templates de script, parsing de resultado
-  tools/          # tools MCP (list_layers, list_elements, get_element, create_element, update_element)
+  fast_reader.py  # leitura rápida via capellambse (list_layers/list_elements/get_element)
+  query.py        # tools de consulta PRD-09 (find_references, trace_element, list_exchanges, impact_analysis)
+  tools/          # tools MCP (model_tools.py: leitura/escrita/diagramas; query_tools.py: consultas)
   resources/      # resources MCP (capella://{model_path}/...)
 tests/
   fixtures/       # modelo .aird de teste

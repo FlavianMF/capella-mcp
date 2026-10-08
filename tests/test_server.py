@@ -27,6 +27,10 @@ def test_all_v1_tools_registered():
         "delete_diagram",
         "layout_diagram",
         "export_diagram",
+        "find_references",
+        "trace_element",
+        "list_exchanges",
+        "impact_analysis",
     }
 
 

@@ -1220,3 +1220,43 @@ class TestAttachMode:
         monkeypatch.setattr(bridge.time, "sleep", self._fake_listener_writes(requests_dir, payload))
 
         assert bridge.get_element("demo.aird", "x1") == payload
+
+
+class TestQueryTools:
+    """find_references/trace_element/list_exchanges/impact_analysis (PRD-09)
+    are served from capellambse only -- never a Capella subprocess. The
+    traversal itself is covered by tests/test_query.py; these check the
+    bridge wiring: model resolution, lock, error mapping."""
+
+    @pytest.fixture
+    def served(self, models_root, workspace_root, monkeypatch, rich_model):
+        def _run(*args, **kwargs):
+            raise AssertionError("query tools must never spawn Capella")
+
+        monkeypatch.setattr(bridge, "_spawn_and_wait", _run)
+        monkeypatch.setattr(bridge.fast_reader, "_open", lambda abs_path: rich_model.model)
+        return rich_model
+
+    def test_each_tool_returns_contract_shape(self, served):
+        calls = [
+            bridge.find_references("demo.aird", served.capturar.uuid, include_diagrams=True),
+            bridge.trace_element("demo.aird", served.capturar.uuid, relation="allocation", direction="in"),
+            bridge.list_exchanges("demo.aird", served.fonte.uuid, kind="all"),
+        ]
+        for result in calls:
+            assert set(result) == {"root", "items", "total", "truncated"}
+            assert result["items"]
+        impact = bridge.impact_analysis("demo.aird", served.fonte.uuid, max_depth=2, max_results=50)
+        assert set(impact) == {"root", "items", "total", "truncated", "counts"}
+
+    def test_unknown_element_is_bridge_error_with_get_element_text(self, served):
+        with pytest.raises(bridge.BridgeError, match="^element not found: missing$"):
+            bridge.trace_element("demo.aird", "missing")
+
+    def test_bad_argument_is_bridge_error(self, served):
+        with pytest.raises(bridge.BridgeError, match="kind"):
+            bridge.list_exchanges("demo.aird", served.fonte.uuid, kind="bogus")
+
+    def test_model_path_escape_rejected(self, served):
+        with pytest.raises(bridge.BridgeError, match="escapes"):
+            bridge.find_references("../outside.aird", served.fonte.uuid)
