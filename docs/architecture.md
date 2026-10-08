@@ -139,6 +139,29 @@ Tools (ações, leitura + escrita):
   do Sirius, com fallback pra um layout em árvore determinístico
 - `export_diagram(model_path, image_format="PNG")`
 
+Tools de consulta (PRD-09 do capella_llm_window; só leitura, limitadas,
+servidas só por `capellambse` -- sem fallback headless, enxergam o último
+estado *salvo*; ver `query.py` e `tools/query_tools.py`). Todas devolvem
+`{root: {id,label,type,layer}, items: [{id,label,type,layer,relation,direction,depth,viaId}], total, truncated}`,
+itens deduplicados por `(id, relation, direction)` e ordenados por
+profundidade, camada (OA, SA, LA, PA, EPBS, ""), tipo, label, id;
+`max_results` padrão 50 (1..200), `max_depth` padrão 2 (1..4):
+
+- `find_references(model_path, element_id, max_results=50, include_diagrams=False)`
+  — quem referencia o elemento por referência não-containment
+  (`relation` = nome do atributo `capellambse`); com `include_diagrams`,
+  itens `Diagram`/`shown_in`
+- `trace_element(model_path, element_id, relation="all", direction="both", max_depth=2, max_results=50)`
+  — segue `AbstractTrace` (`allocation` = classes `*Allocation`,
+  `realization` = `*Realization`); `relation` do item = nome da classe do
+  trace; `out` = elemento é a origem do trace
+- `list_exchanges(model_path, element_id, kind="all", max_results=50)`
+  — trocas (`functional`/`component`/`physical`) cuja origem/destino é o
+  elemento ou uma porta dele; `viaId` = elemento na outra ponta
+- `impact_analysis(model_path, element_id, max_depth=2, max_results=50)`
+  — `contained`, `referenced_by`, `trace`, `exchange`, `diagram` num só
+  resultado, mais `counts` por relação (antes do corte)
+
 Resources adicionais (diagramas):
 - `capella://{model_path}/diagrams`
 - `capella://{model_path}/diagram/{diagram_uid}`

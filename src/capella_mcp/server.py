@@ -8,9 +8,11 @@ from mcp.server.mcpserver import MCPServer
 
 from capella_mcp.resources.model_resources import register as register_resources
 from capella_mcp.tools.model_tools import register as register_tools
+from capella_mcp.tools.query_tools import register as register_query_tools
 
 mcp = MCPServer("capella-mcp")
 register_tools(mcp)
+register_query_tools(mcp)
 register_resources(mcp)
 
 

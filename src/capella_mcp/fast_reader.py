@@ -24,6 +24,7 @@ coverage gap and must propagate so the dispatcher falls back.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import capellambse
@@ -61,6 +62,14 @@ def _type_name(el) -> str:
     return name
 
 
+def _label(el):
+    # capellambse warns (FutureWarning) on .name for unnamed metaclasses
+    # (traces, realizations); for those "no name" is the answer, not noise.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        return getattr(el, "name", None)
+
+
 def _serialize(el) -> dict:
     # el.name is the raw NamedElement attribute; python4capella's
     # get_label() (the headless side's equivalent) goes through Capella's
@@ -72,7 +81,7 @@ def _serialize(el) -> dict:
     # are what would catch a real divergence for a given type.
     return {
         "id": el.uuid,
-        "label": getattr(el, "name", None),
+        "label": _label(el),
         "type": _type_name(el),
     }
 
@@ -171,7 +180,7 @@ _CAPABILITY_RELATIONS = (("involved_components", "involved_components"), ("invol
 
 
 def _ref(el) -> dict:
-    return {"id": el.uuid, "label": getattr(el, "name", None), "type": _type_name(el)}
+    return {"id": el.uuid, "label": _label(el), "type": _type_name(el)}
 
 
 def _targets(el, attr: str) -> list:
