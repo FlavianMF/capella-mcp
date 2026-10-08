@@ -41,6 +41,25 @@ class NotFound(Exception):
     """The requested layer/element genuinely does not exist in the model."""
 
 
+# python4capella (the headless path) wraps the single EMF oa "Entity" class
+# in two Python classes, OperationalActor and OperationalEntity, split on the
+# Entity's actor flag; capellambse exposes one oa.Entity with `is_actor`.
+# Map both ways so a type_filter and a reported "type" mean the same thing on
+# either path (see bridge._list_elements_headless's own exact-class-name
+# filter for the headless half of this).
+_SPLIT_TYPES = {
+    "OperationalActor": ("Entity", True),
+    "OperationalEntity": ("Entity", False),
+}
+
+
+def _type_name(el) -> str:
+    name = type(el).__name__
+    if name == "Entity" and hasattr(el, "is_actor"):
+        return "OperationalActor" if el.is_actor else "OperationalEntity"
+    return name
+
+
 def _serialize(el) -> dict:
     # el.name is the raw NamedElement attribute; python4capella's
     # get_label() (the headless side's equivalent) goes through Capella's
@@ -53,7 +72,7 @@ def _serialize(el) -> dict:
     return {
         "id": el.uuid,
         "label": getattr(el, "name", None),
-        "type": type(el).__name__,
+        "type": _type_name(el),
     }
 
 
@@ -101,7 +120,14 @@ def list_elements(abs_path: Path, layer: str, type_filter: str | None) -> dict:
     if layer_obj is None:
         raise NotFound(f"layer not present in model: {layer!r}")
 
-    elements = model.search(type_filter, below=layer_obj)
+    split = _SPLIT_TYPES.get(type_filter)
+    if split is not None:
+        base, is_actor = split
+        elements = [
+            el for el in model.search(base, below=layer_obj) if bool(getattr(el, "is_actor", False)) == is_actor
+        ]
+    else:
+        elements = model.search(type_filter, below=layer_obj)
     return {"elements": [_serialize(el) for el in elements]}
 
 

@@ -70,3 +70,30 @@ class TestGetElement:
     def test_unknown_id_raises_not_found(self):
         with pytest.raises(fast_reader.NotFound):
             fast_reader.get_element(FIXTURE, "00000000-0000-0000-0000-000000000000")
+
+
+CAR_HMI = Path(__file__).parent / "fixtures" / "car_hmi" / "car_hmi.aird"
+MOTORISTA = "ecf92423-5bda-4eac-b9a8-ecc915d293f0"  # actor (is_actor=True)
+
+
+class TestOperationalActorVsEntity:
+    """capellambse has a single oa.Entity class (is_actor flag) where
+    python4capella -- the headless path -- has two wrapper classes,
+    OperationalActor and OperationalEntity, over that same EMF class. The
+    fast path must answer the same type_filter names with the same split,
+    and report the same type names, as headless does."""
+
+    def test_operational_actor_filter_returns_only_actors(self):
+        result = fast_reader.list_elements(CAR_HMI, "oa", "OperationalActor")
+        assert [(e["label"], e["type"]) for e in result["elements"]] == [
+            ("Motorista", "OperationalActor")
+        ]
+
+    def test_operational_entity_filter_excludes_actors(self):
+        result = fast_reader.list_elements(CAR_HMI, "oa", "OperationalEntity")
+        labels = sorted(e["label"] for e in result["elements"])
+        assert labels == ["Painel de Instrumentos", "Veículo"]
+        assert {e["type"] for e in result["elements"]} == {"OperationalEntity"}
+
+    def test_get_element_reports_actor_type(self):
+        assert fast_reader.get_element(CAR_HMI, MOTORISTA)["type"] == "OperationalActor"
