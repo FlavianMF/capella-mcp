@@ -97,3 +97,60 @@ class TestOperationalActorVsEntity:
 
     def test_get_element_reports_actor_type(self):
         assert fast_reader.get_element(CAR_HMI, MOTORISTA)["type"] == "OperationalActor"
+
+
+def _ids(items):
+    return [i["id"] for i in items]
+
+
+class TestGetElementRelations:
+    """get_element adds a bounded "relations" map of {id, label, type}
+    lists; the original id/label/type keys are unchanged."""
+
+    @pytest.fixture
+    def get(self, rich_model, monkeypatch):
+        monkeypatch.setattr(fast_reader, "_open", lambda abs_path: rich_model.model)
+        return lambda el: fast_reader.get_element(CAR_HMI, el.uuid)
+
+    def test_existing_keys_unchanged(self, get, rich_model):
+        result = get(rich_model.ihm)
+        assert result["id"] == rich_model.ihm.uuid
+        assert result["label"] == "IHM"
+        assert result["type"] == "LogicalComponent"
+
+    def test_capability_lists_involved_entities_and_activities(self, get, rich_model):
+        rel = get(rich_model.capability)["relations"]
+        assert sorted((e["label"], e["type"]) for e in rel["involved_entities"]) == [
+            ("Motorista", "OperationalActor"),
+            ("Veículo", "OperationalEntity"),
+        ]
+        assert _ids(rel["involved_activities"]) == [rich_model.monitorar.uuid]
+
+    def test_entity_lists_capabilities_and_allocated_activities(self, get, rich_model):
+        rel = get(rich_model.motorista)["relations"]
+        assert _ids(rel["involved_capabilities"]) == [rich_model.capability.uuid]
+        assert _ids(rel["allocated_activities"]) == [rich_model.monitorar.uuid]
+
+    def test_function_lists_allocation_and_exchanges(self, get, rich_model):
+        rel = get(rich_model.capturar)["relations"]
+        assert _ids(rel["allocated_to"]) == [rich_model.fonte.uuid]
+        assert _ids(rel["exchanges"]) == [rich_model.fe.uuid]
+
+    def test_component_lists_allocated_functions_and_realizations(self, get, rich_model):
+        assert _ids(get(rich_model.fonte)["relations"]["allocated_functions"]) == [rich_model.capturar.uuid]
+        rel = get(rich_model.logical_system)["relations"]
+        assert [i["type"] for i in rel["realized_components"]] == ["SystemComponent"]
+        assert [i["type"] for i in rel["realizing_components"]] == ["PhysicalComponent"]
+
+    def test_empty_relations_are_omitted(self, get, rich_model):
+        rel = get(rich_model.ihm)["relations"]
+        assert all(rel.values())
+
+    def test_relation_lists_are_capped(self, get, rich_model, monkeypatch):
+        monkeypatch.setattr(fast_reader, "RELATION_CAP", 1)
+        model = rich_model.model
+        model.la.root_component.allocated_functions.append(rich_model.capturar)
+        model.la.root_component.allocated_functions.append(rich_model.exibir)
+        result = get(model.la.root_component)
+        assert len(result["relations"]["allocated_functions"]) == 1
+        assert result["relations_truncated"] == {"allocated_functions": 2}

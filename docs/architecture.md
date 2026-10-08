@@ -85,7 +85,12 @@ Resources (leitura, navegação):
 Tools (ações, leitura + escrita):
 - `list_layers(model_path)` — fast-path `capellambse` (ver [[0005-camada-leitura-capellambse]])
 - `list_elements(model_path, layer, type_filter=None)` — fast-path só com `type_filter`
-- `get_element(model_path, element_id)` — fast-path `capellambse`
+- `get_element(model_path, element_id)` — fast-path `capellambse`; quando
+  servido pelo fast-path, inclui `relations` (listas `{id,label,type}` por
+  relação: `involved_entities`, `allocated_to`, `exchanges`,
+  `allocated_functions`, `realized_*`/`realizing_*`...), cada lista limitada a
+  25 itens (`relations_truncated` dá o total quando corta). O fallback
+  headless/attach devolve só `{id,label,type}`
 - `list_diagrams(model_path)` — duplica o resource `.../diagrams` como tool
   (clientes que só chamam `ListTools`/`CallTool`, nunca resources, também
   conseguem checar diagramas existentes antes de criar um novo)
