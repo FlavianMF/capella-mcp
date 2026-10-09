@@ -28,6 +28,21 @@ uv sync
 uv run pytest tests/ -k "not integration"
 ```
 
+## Schemas das tools (`schemas/model-tools.json`)
+
+Arquivo gerado com nome, descrição e `inputSchema` de cada tool registrada,
+usado como fonte única por consumidores externos (ex.: o plugin
+`capella_llm_window`, que oferece gêmeas "live" das tools de leitura). Não
+edite à mão. Depois de mudar qualquer tool (nome, docstring ou parâmetros):
+
+```bash
+uv run python scripts/dump_tool_schemas.py          # regenera
+uv run python scripts/dump_tool_schemas.py --check  # só verifica (exit 1 se velho)
+```
+
+`tests/test_tool_schemas.py` falha se o arquivo commitado divergir do servidor.
+Não precisa de Capella.
+
 ## Build da imagem
 
 ```bash
