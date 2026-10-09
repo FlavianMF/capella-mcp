@@ -118,16 +118,22 @@ def register(mcp: MCPServer) -> None:
 
     @mcp.tool()
     def remove_from_diagram(model_path: str, diagram_uid: str, element_id: str) -> dict:
-        """Remove an element's node from an existing diagram, WITHOUT
-        deleting the element from the model and WITHOUT recreating the
-        diagram.
+        """Remove an element's node (view) from a diagram -- this does NOT
+        delete the element from the model; hiding is not deleting.
+
+        This tool never deletes a model element, and neither does any other
+        tool on this server: there is no model-delete tool yet (only
+        delete_diagram). If the user asks to delete an element from the
+        model, do not use this tool -- tell them the server cannot do it
+        yet. It also works WITHOUT recreating the diagram.
 
         NOT supported for breakdown diagrams (create_diagram) -- raises an
         error explaining why: Capella re-synchronizes a breakdown diagram's
         direct semantic children on every save regardless of this call, so
         a node removed here would silently reappear on the next save of ANY
-        tool in this session. Use delete_diagram + create_diagram (with a
-        lower max_depth, or excluding that subtree) instead. NOT supported
+        tool in this session. To merely hide the element there, use
+        delete_diagram + create_diagram (with a lower max_depth, or
+        excluding that subtree) instead. NOT supported
         for scenario diagrams either, same structural reason as
         add_to_diagram (ordered InstanceRoles/SequenceMessages, not simple
         containment).

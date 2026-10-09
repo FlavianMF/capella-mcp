@@ -3142,8 +3142,12 @@ def remove_from_diagram(model_path: str, diagram_uid: str, element_id: str) -> d
                     f"remove_from_diagram does not support breakdown diagrams ({{diagram_type}}) -- "
                     "Capella re-synchronizes a breakdown diagram's direct semantic children on every "
                     "save regardless of this call, so a node removed here would silently reappear on "
-                    "the next save of ANY tool in this session; use delete_diagram + create_diagram "
-                    "(with a lower max_depth, or excluding that subtree) instead"
+                    "the next save of ANY tool in this session. Note that remove_from_diagram only "
+                    "removes a view node and never deletes the model element: deleting an element "
+                    "from the model needs a model-delete tool, which this server does not provide "
+                    "yet -- tell the user so. To merely hide the element from a breakdown diagram, "
+                    "use delete_diagram + create_diagram (with a lower max_depth, or excluding "
+                    "that subtree) instead"
                 )
             elif (
                 diagram_type not in {_CONTAINER_DIAGRAMS_BY_NAME!r}
