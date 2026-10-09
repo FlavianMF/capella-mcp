@@ -510,7 +510,7 @@ class TestDiagrams:
         root = next(e for e in activities["elements"] if e["label"] == "Exibir velocidade do veículo")
         created = bridge.create_diagram("car_hmi/car_hmi.aird", "oa", root_id=root["id"])
         try:
-            with pytest.raises(bridge.BridgeError, match="does not support breakdown diagrams"):
+            with pytest.raises(bridge.BridgeError, match="never deletes the model element"):
                 bridge.remove_from_diagram("car_hmi/car_hmi.aird", created["diagram_uid"], root["id"])
         finally:
             bridge.delete_diagram("car_hmi/car_hmi.aird", created["diagram_uid"])

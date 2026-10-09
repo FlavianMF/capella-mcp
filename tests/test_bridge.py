@@ -907,6 +907,10 @@ class TestRemoveFromDiagram:
         assert "does not support breakdown diagrams" in script
         assert "does not support scenario diagrams" in script
         assert "re-synchronizes a breakdown diagram's direct semantic children" in script
+        # the refusal must not read as "delete the element": it has to say
+        # that no model-delete tool exists.
+        assert "never deletes the model element" in script
+        assert "which this server does not provide" in script
         # regression guard: edges connected to the removed node must be
         # deleted explicitly, not left dangling.
         assert "edges_to_delete" in script
