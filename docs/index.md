@@ -55,6 +55,8 @@ Expor, via MCP, tools e resources que permitam a uma LLM:
   [[0004-escopo-v1-leitura-e-escrita]].
 - PRDs: [`delete_element`](prd/delete-element.prd.md) — apagar um elemento
   do modelo com o delete semântico do Capella (issue #4).
+- Spikes: [`delete_element` fase 1](spikes/delete-element-spike.md) — kit e
+  guia para rodar o spike ao vivo no Capella.
 - Conceitos: [[arcadia-layers]], [[python4capella-api]].
 - Segundo cérebro: `docs/second_brain/` (submodule) — ver notas
   `Capella MBSE`, `MBSE com Agentic AI`, `Proposta_Pesquisa_MBSE_AI` para o
