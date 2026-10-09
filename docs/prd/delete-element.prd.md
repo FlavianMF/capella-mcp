@@ -8,8 +8,8 @@
 scope here (see [Out of Scope](#out-of-scope)).
 
 The seven open questions of the first draft were resolved with the user on
-2026-10-09; see [Resolved (2026-10-09)](#resolved-2026-10-09). Points still
-open are under [Open questions](#open-questions).
+2026-10-09, and so was the plugin-side `delete_check` question; see
+[Resolved (2026-10-09)](#resolved-2026-10-09).
 
 ## Problem
 
@@ -190,7 +190,8 @@ does not provide [a model-delete tool] yet" to "use delete_element".
 - **`delete_check` and the shared query contract.** `impact_analysis` is a
   PRD-09 tool whose result shape is shared with the plugin's live Java
   backend. `delete_check` is a new optional field: clients that don't know it
-  ignore it. Whether the live backend adds it too is an open question.
+  ignore it. The live backend fills it too, with the same rules (decided
+  2026-10-09, see [Resolved](#resolved-2026-10-09) item 8).
 
 ## Security
 
@@ -216,7 +217,7 @@ does not provide [a model-delete tool] yet" to "use delete_element".
 
 | # | Phase | Description | Status | Parallel | Depends | PRP Plan |
 |---|-------|-------------|--------|----------|---------|----------|
-| 1 | Live spike | Throwaway script on a copy of `car_hmi`: find the headless semantic-delete entry point, check cleanup per OA type, diagrams (OABD resync, OAB/OAIB nodes and edges, diagrams rooted at the element), attach mode, and that no dialog blocks | pending | - | - | - |
+| 1 | Live spike | Throwaway script on a copy of `car_hmi`: find the headless semantic-delete entry point, check cleanup per OA type, diagrams (OABD resync, OAB/OAIB nodes and edges, diagrams rooted at the element), attach mode, and that no dialog blocks | kit ready ([guide](../spikes/delete-element-spike.md)), awaiting a live run | - | - | - |
 | 2 | `delete_element` for OA | Bridge template + tool, R1-R10 for the OA allowlist, shared delete-policy helper, `delete_check` in `impact_analysis`, unit tests, `remove_from_diagram` text update | pending | - | 1 | - |
 | 3 | Integration tests | Live tests on a fixture copy, per OA type, plus the fixture-copy helper | pending | with 4 | 2 | - |
 | 4 | Docs | `docs/architecture.md` tool list, decision record for "semantic delete, not EMF" and the cascade policy, README tool table | pending | with 3 | 2 | - |
@@ -302,14 +303,22 @@ the change to question 2.
    refused outright (R4).
 7. **Result cap.** Confirmed: 200 items in `removed`, the same max as the
    query tools (R7).
+8. **`delete_check` on the plugin's live backend (decided 2026-10-09).**
+   The plugin's live Java backend for `impact_analysis` fills
+   `delete_check` too, with the same rules (protected roots, OA allowlist,
+   owned-children / `needs_cascade`), and the plugin's copy of the shared
+   PRD-09 query contract lists the field. So `delete_check` is part of the
+   shared `impact_analysis` shape, not a field only this server fills. Both
+   sides must keep the rule lists in sync. The parity test (live
+   `delete_check.reason` vs the refusal `delete_element` raises) covers
+   this server only.
 
 ## Open questions
 
-- **`delete_check` on the plugin's live backend.** `impact_analysis` has the
-  same name and result shape in the plugin's live Java tools (PRD-09 shared
-  contract). Should the live backend add `delete_check` too, and should the
-  shared contract list it? Until decided, it is an optional field that only
-  this server fills.
+None left from the first draft. The plugin-side `delete_check` question
+was decided on 2026-10-09 ([Resolved](#resolved-2026-10-09) item 8). The
+phase 1 spike answers R5/R9/R6 (kit and results template:
+[`docs/spikes/delete-element-spike.md`](../spikes/delete-element-spike.md)).
 
 ## Out of scope
 
