@@ -1,14 +1,15 @@
 # `delete_element`: delete a model element with Capella's semantic delete
 
-**Status:** Draft
+**Status:** Draft, decisions confirmed 2026-10-09; needs the phase 1 spike
 **Tracking issue:** [#4](https://github.com/FlavianMF/capella-mcp/issues/4)
 **Depends on:** PR #5 (interim error text in `remove_from_diagram`, merged);
 `impact_analysis` (`query.py`, PRD-09 query tools, merged)
 **Client:** `capella_llm_window` (Capella chat plugin). Its follow-up is out of
 scope here (see [Out of Scope](#out-of-scope)).
 
-Defaults marked **(default, not confirmed)** are recommendations made while
-writing this PRD. Each one is listed again in [Open Questions](#open-questions).
+The seven open questions of the first draft were resolved with the user on
+2026-10-09; see [Resolved (2026-10-09)](#resolved-2026-10-09). Points still
+open are under [Open questions](#open-questions).
 
 ## Problem
 
@@ -56,11 +57,14 @@ model. So "add a delete" means "add Capella's own delete, with its cleanup".
   in 3 diagrams), the plugin asks for approval, the model calls
   `delete_element`, and answers with the returned list of removed items.
 - **Same user, element with children.** "Delete *Veículo*." The entity owns
-  *Painel de Instrumentos*. `delete_element` refuses without `cascade=true`
-  and says which children it owns. The model asks the user, then calls again
-  with `cascade=true`.
+  *Painel de Instrumentos*. `impact_analysis` already reports
+  `delete_check.reason: "has_children"` with `needs_cascade: true`, so the
+  model asks the user before any write, then calls `delete_element` with
+  `cascade=true`. Called without it, `delete_element` refuses and names the
+  children.
 - **Wrong target.** "Delete the root operational activity" or "delete the
-  Operational Analysis". `delete_element` refuses: protected element.
+  Operational Analysis". `impact_analysis` reports `reason: "protected"`;
+  `delete_element` refuses the same way if called anyway.
 - **Cleanup after a failed generation.** The model created a wrong element
   with `create_element` a moment ago and deletes it.
 
@@ -109,16 +113,22 @@ Non-goals:
 ### Tool surface
 
 ```
-delete_element(model_path: str, element_id: str, cascade: bool = False, dry_run: bool = False) -> dict
+delete_element(model_path: str, element_id: str, cascade: bool = False) -> dict
 ```
 
 Registered in `tools/model_tools.py` next to `update_element`, wrapped in
 `bridge.model_lock(...)` for the whole call like every other write tool.
 
+There is no `dry_run`. The preview is the read-only `impact_analysis`, which
+gains a `delete_check` field (R8). Reason: the plugin asks for approval on
+every call of a write tool, a dry run included, while `impact_analysis` is a
+READ tool and needs none.
+
 Docstring must say, in this order: it deletes the element from the model (not
 from one diagram); diagrams that show it lose its node; children and
-dependent links go with it; call `impact_analysis` or `dry_run=true` first;
-`remove_from_diagram` is the tool to only hide an element.
+dependent links go with it; call `impact_analysis` first to preview what goes
+and whether the delete would be refused; `remove_from_diagram` is the tool to
+only hide an element.
 
 ### Behaviour
 
@@ -126,12 +136,12 @@ dependent links go with it; call `impact_analysis` or `dry_run=true` first;
 |---|-------------|
 | R1 | Resolve `element_id` the same way `update_element` does (walk each layer's `get_all_contents()`, match `_element_id`). Not found -> `BridgeError("element not found: <id>")`. |
 | R2 | Refuse protected elements, regardless of `cascade`: the `SystemEngineering`/project root, the five layer roots (`OperationalAnalysis`, `SystemAnalysis`, `LogicalArchitecture`, `PhysicalArchitecture`, `EPBSArchitecture`), every root package reached by a layer's `pkg_method`, and the root function/component/entity reached by `owned_root_method` (see `BREAKDOWN_DIAGRAMS` in `bridge.py`). |
-| R3 | Refuse types outside the supported list for the current phase, with the list in the error text. Phase 2 list (default, not confirmed): OA layer only, the OA types `create_element` can make today (`OperationalActivity`, `OperationalEntity`, `OperationalActor`, `OperationalCapability`, OA `FunctionalExchange` ("Interaction")). `OperationalProcess` and `CommunicationMean` follow in phase 5 with the other layers. Phase 4 adds SA/LA/PA functions, components, capabilities and exchanges. |
-| R4 | Cascade policy (default, not confirmed): if the element owns model elements other than its structural parts (ports, pins, constraints, property values, summaries), refuse unless `cascade=true`, and name the owned children (id, label, type, first 10 plus a count). Links that point at the element (exchanges, involvements, allocations, traces) never trigger a refusal: semantic delete removes them and the result reports them. The plugin's approval prompt is the guard for those. |
+| R3 | Refuse types outside the supported list for the current phase, with the list in the error text. Phase 2 list (confirmed 2026-10-09): OA layer only, the OA types `create_element` can make today (`OperationalActivity`, `OperationalEntity`, `OperationalActor`, `OperationalCapability`, OA `FunctionalExchange` ("Interaction")). Phase 5 adds `OperationalProcess`, `CommunicationMean` and the SA/LA/PA functions, components, capabilities and exchanges. |
+| R4 | Cascade policy (confirmed 2026-10-09): if the element owns model elements other than its structural parts (ports, pins, constraints, property values, summaries), refuse unless `cascade=true`, and name the owned children (id, label, type, first 10 plus a count). Non-root packages the user made (e.g. an `OperationalActivityPkg` with content) follow the same rule: they need `cascade=true`, they are not refused outright. Links that point at the element (exchanges, involvements, allocations, traces) never trigger a refusal: semantic delete removes them and the result reports them. The plugin's approval prompt is the guard for those. |
 | R5 | Delete with Capella's semantic delete inside `model.start_transaction()` / `commit_transaction()`, rolling back on any exception. Raw `EcoreUtil.delete` / `EMF_API.delete()` on a model element is forbidden. Which Capella entry point (candidates: `CapellaDeleteCommand` from `org.polarsys.capella.core.platform.sirius.ui.commands` with confirmation off, or the non-UI delete helper it delegates to) is decided by the spike (phase 1). |
 | R6 | Save: spawn mode calls `model.save()`; attach mode does not (`if not _ATTACH_MODE: model.save()`, decision 0006). Dispatch through `_dispatch()` like `create_element`/`update_element`, so a live GUI session is used when one has the model open. |
 | R7 | Result (actual, computed in the Capella process): `{deleted: true, element: {id, label, type}, removed: [{id, label, type, relation}], removed_count, diagrams_updated: [{uid, name}], diagrams_deleted: [{uid, name}], saved: bool}`. `relation` uses the `impact_analysis` vocabulary (`contained`, `exchange`, `trace`, `referenced_by`). `removed` is capped at 200 items with `truncated: true` and `removed_count` giving the total. Computed by snapshotting the element's containment tree and its inverse references before the delete, then keeping the ids that no longer resolve after commit. |
-| R8 | `dry_run=true`: no Capella process, no write, no lock beyond the read lock. Runs the R1-R4 checks on the capellambse fast path and returns `{deleted: false, dry_run: true, would_refuse: <reason or null>, impact: <impact_analysis result>}`. It reflects the last saved state, like every fast-path read. |
+| R8 | Preview through `impact_analysis` (stays READ, no Capella process). Its result gains `delete_check: {allowed: bool, reason: null \| "not_found" \| "protected" \| "unsupported_type" \| "has_children", detail: str, needs_cascade: bool}`, computed on the capellambse fast path by the same R2-R4 rules `delete_element` applies. One shared helper (in `query.py` or a new `delete_policy.py`) holds the protected-root list, the type allowlist and the owned-children rule; the Capella-side template checks the same lists so the two answers agree. `needs_cascade` is true when the only obstacle is owned children. Like every fast-path read it reflects the last saved state. |
 | R9 | Diagrams: diagrams that show the element are updated by the semantic delete (its node and connected edges go). Diagrams whose target (root) is the deleted element or one of its deleted children are deleted by Capella's cleanup; they are reported in `diagrams_deleted`. Breakdown diagrams re-synchronize on save, so their node disappears without extra code. All three are spike checks, not assumptions. |
 | R10 | Fast-path reads after a delete must not see the element. `fast_reader._open` builds a new `MelodyModel` per call (no cache today), so no invalidation is needed; a regression test locks that in (P3). If a cache is added later, `delete_element` must invalidate it. In attach mode the delete is not saved, so fast-path reads (and `impact_analysis`) still see the element until the user saves; the docstring says so. |
 
@@ -143,9 +153,9 @@ next.
 | Case | Text (shape) |
 |------|------|
 | Not found | `element not found: <id>. Use list_elements or get_element to find the current id.` |
-| Protected | `<label> (<type>) is a protected <layer root / root package / root function> and cannot be deleted. Delete its children instead.` |
+| Protected | `<label> (<type>) is a protected <layer root / root package / root function> and cannot be deleted. Delete its children instead; impact_analysis on a child shows whether it can be deleted.` |
 | Unsupported type | `delete_element does not support <type> yet. Supported: <list>. Tell the user it must be deleted in Capella.` |
-| Has children, no cascade | `<label> owns <n> elements (<first ids/labels>). Ask the user, then call delete_element again with cascade=true to delete them too.` |
+| Has children, no cascade | `<label> owns <n> elements (<first ids/labels>). Call impact_analysis to show the user everything that would go, ask them, then call delete_element again with cascade=true.` |
 | Delete failed | `Capella refused the delete of <label>: <cause>. Nothing was changed (transaction rolled back).` |
 
 `remove_from_diagram`'s breakdown refusal (PR #5) changes from "this server
@@ -173,10 +183,14 @@ does not provide [a model-delete tool] yet" to "use delete_element".
   as a write: always asks for approval in every non-bypass mode, and
   `delete_*` is excluded from auto-approve. Its dirty-editor guard
   (`McpWriteGuard`) makes the user save before the call, and it refreshes the
-  project after a write, so the GUI reloads the saved files. `dry_run=true`
-  is still a write-kind call for the plugin (same tool name); the model
-  should prefer `impact_analysis` (a READ) for previews. Documented in the
-  docstring.
+  project after a write, so the GUI reloads the saved files. That is why the
+  preview lives in `impact_analysis` (in the plugin's `READ_TOOLS`, no
+  approval) and not in a `dry_run` flag on `delete_element`, which the plugin
+  would gate like a real delete.
+- **`delete_check` and the shared query contract.** `impact_analysis` is a
+  PRD-09 tool whose result shape is shared with the plugin's live Java
+  backend. `delete_check` is a new optional field: clients that don't know it
+  ignore it. Whether the live backend adds it too is an open question.
 
 ## Security
 
@@ -192,7 +206,8 @@ does not provide [a model-delete tool] yet" to "use delete_element".
 | Level | What | Where |
 |-------|------|-------|
 | Unit (mocked `_dispatch`/`_run_script`) | template contains the transaction, rollback and `_ATTACH_MODE` save guard; refusal paths map to `BridgeError` with the texts above; tool is registered with the right signature | `tests/test_bridge.py`, `tests/test_server.py` |
-| Unit (capellambse, `rich_model`) | `dry_run` policy checks: protected roots, unsupported type, owns children, links do not refuse | `tests/test_query.py` or new `tests/test_delete_policy.py` |
+| Unit (capellambse, `rich_model`) | `impact_analysis` `delete_check`: protected roots (each kind), unsupported type, owns children (`needs_cascade: true`), user package with content needs cascade, links alone do not refuse, allowed element; existing `impact_analysis` fields unchanged | `tests/test_query.py` (and `tests/test_delete_policy.py` if the helper gets its own module) |
+| Parity (live Capella) | for each refusal case, `impact_analysis`'s `delete_check.reason` matches the refusal `delete_element` raises | `tests/test_integration.py` |
 | Integration (live Capella, skipped without `CAPELLA_BIN`, car_hmi fixture) | per supported type: delete, then `get_element` raises not found on both fast and headless paths; the uuid appears nowhere in the `.capella`/`.aird` text; every diagram that showed it still `get_diagram`s and exports a non-blank PNG; cascade refusal then cascade success on *Veículo*; protected refusal on the root activity; OABD node gone after delete | `tests/test_integration.py` |
 | Fixture hygiene | integration tests work on a copy of `car_hmi` (temp dir under `MODELS_ROOT`), never on the committed fixture, since the delete saves | `tests/conftest.py` / integration setup |
 | LLM replay | issue #4 prompt against the plugin with a local model: tool chosen is `delete_element` | manual, `docs/testing-with-llm.md` |
@@ -202,7 +217,7 @@ does not provide [a model-delete tool] yet" to "use delete_element".
 | # | Phase | Description | Status | Parallel | Depends | PRP Plan |
 |---|-------|-------------|--------|----------|---------|----------|
 | 1 | Live spike | Throwaway script on a copy of `car_hmi`: find the headless semantic-delete entry point, check cleanup per OA type, diagrams (OABD resync, OAB/OAIB nodes and edges, diagrams rooted at the element), attach mode, and that no dialog blocks | pending | - | - | - |
-| 2 | `delete_element` for OA | Bridge template + tool, R1-R10 for the OA allowlist, unit tests, `remove_from_diagram` text update | pending | - | 1 | - |
+| 2 | `delete_element` for OA | Bridge template + tool, R1-R10 for the OA allowlist, shared delete-policy helper, `delete_check` in `impact_analysis`, unit tests, `remove_from_diagram` text update | pending | - | 1 | - |
 | 3 | Integration tests | Live tests on a fixture copy, per OA type, plus the fixture-copy helper | pending | with 4 | 2 | - |
 | 4 | Docs | `docs/architecture.md` tool list, decision record for "semantic delete, not EMF" and the cascade policy, README tool table | pending | with 3 | 2 | - |
 | 5 | Other layers | Extend the allowlist to SA/LA/PA (functions, components, capabilities, exchanges), one spike check + integration test per type | pending | - | 3 | - |
@@ -220,9 +235,10 @@ does not provide [a model-delete tool] yet" to "use delete_element".
 
 **Phase 2: `delete_element` for OA**
 - Goal: the tool works for the incident's case and its OA neighbours.
-- Scope: `bridge.delete_element`, `bridge._delete_element_dry_run` (fast
-  path), protected-root helper shared with the dry run, tool in
-  `model_tools.py`, unit tests, PR #5 text update.
+- Scope: `bridge.delete_element`; the shared delete-policy helper
+  (protected roots, OA allowlist, owned-children rule); `delete_check` added
+  to `query.impact_analysis` and its tool docstring in `query_tools.py`;
+  tool in `model_tools.py`; unit tests; PR #5 text update.
 - Success signal: `uv run pytest tests/ -k "not integration"` green; tool
   listed by the MCP Inspector.
 
@@ -234,8 +250,10 @@ does not provide [a model-delete tool] yet" to "use delete_element".
 
 **Phase 4: Docs**
 - Goal: the tool and its policy are discoverable without reading `bridge.py`.
-- Success signal: `docs/architecture.md` lists the tool; a new
-  `docs/decisions/0007-...` records semantic delete and the cascade default.
+- Success signal: `docs/architecture.md` lists the tool and the
+  `delete_check` field of `impact_analysis`; a new `docs/decisions/0007-...`
+  records semantic delete, the cascade rule, and why the preview is in
+  `impact_analysis` and not a `dry_run` flag.
 
 **Phase 5: Other layers**
 - Goal: same behaviour for SA/LA/PA.
@@ -251,40 +269,47 @@ does not provide [a model-delete tool] yet" to "use delete_element".
 | Decision | Choice | Alternatives | Rationale |
 |----------|--------|--------------|-----------|
 | Delete mechanism | Capella semantic delete in a transaction | raw `EcoreUtil.delete`; capellambse write | raw leaves dangling refs; capellambse is read-only by decision 0005 |
-| Preview | `dry_run` on the fast path, plus existing `impact_analysis` | `impact_analysis` only; headless dry run with rollback | cheap, no Capella process; but see open question 2 |
-| Children | refuse without `cascade=true` (default, not confirmed) | always cascade; never cascade | owned children are the surprising loss; links are expected |
-| Scope v1 | OA layer only (default, not confirmed) | all layers at once | incident is OA, car_hmi fixture is OA-rich, each type needs a live check |
+| Preview | `delete_check` in the read-only `impact_analysis` (user, 2026-10-09) | `dry_run` flag on `delete_element`; headless dry run with rollback | the plugin asks approval for every write-tool call, a dry run included; `impact_analysis` is READ |
+| Children | refuse without `cascade=true`; user packages with content follow the same rule (user, 2026-10-09) | always cascade; never cascade; refuse packages outright | owned children are the surprising loss; links are expected |
+| Scope v1 | OA layer only (user, 2026-10-09) | all layers at once | incident is OA, car_hmi fixture is OA-rich, each type needs a live check |
 | Granularity | one id per call | list of ids | approval per element in the plugin, bounded result |
-| Dispatch | `_dispatch()` (attach-aware) with `_ATTACH_MODE` save guard (default, not confirmed) | `_run_script()` only, like the diagram tools | same as `create_element`/`update_element`; spike must confirm attach |
+| Dispatch | `_dispatch()` (attach-aware) with `_ATTACH_MODE` save guard; spawn-only fallback if the spike finds a UI-thread or dialog problem (user, 2026-10-09) | `_run_script()` only, like the diagram tools | same as `create_element`/`update_element` |
+
+## Resolved (2026-10-09)
+
+The user confirmed all seven first-draft questions ("all ok") and accepted
+the change to question 2.
+
+1. **Cascade policy.** Confirmed: refuse when the element owns non-structural
+   children, unless `cascade=true`; links never refuse (R4).
+2. **Preview: `dry_run` dropped (changed).** `delete_element` has no
+   `dry_run`. The read-only `impact_analysis` reports whether
+   `delete_element` would be refused and why (`delete_check`, R8): protected
+   element, unsupported type, or owns children without cascade. Reason: the
+   plugin asks for approval on every call of a write tool, a dry run
+   included; `impact_analysis` is READ and needs none.
+3. **First-release types.** Confirmed: OA layer only (R3).
+4. **Diagrams rooted at the deleted element.** Confirmed: Capella deletes
+   them and the result lists them in `diagrams_deleted` (R9).
+5. **Attach mode.** Confirmed: supported through `_dispatch()`, no forced
+   save. If the spike shows the delete needs the UI thread or opens a dialog
+   in a live GUI, fall back to spawn-only (`_run_script()`) like the diagram
+   tools (R6).
+6. **Protected list.** Confirmed: model root, five layer roots, root
+   packages, root function/component/entity (R2). Sub-question resolved as
+   the default under the same "all ok": a user-made package with content
+   needs `cascade=true`, the same rule as any other container; it is not
+   refused outright (R4).
+7. **Result cap.** Confirmed: 200 items in `removed`, the same max as the
+   query tools (R7).
 
 ## Open questions
 
-Each has a default this PRD uses; none is confirmed by the user.
-
-1. **Cascade policy.** Default: refuse when the element owns non-structural
-   children, unless `cascade=true`; links never refuse. Alternative: refuse
-   on any inbound reference too (safer, but almost every element has one, and
-   the plugin already asks for approval).
-2. **Keep `dry_run`?** Default: yes, on the fast path. Against: `impact_analysis`
-   already previews, and in the plugin `dry_run` is a write-kind call that
-   asks for approval. Option: drop `dry_run` and add the policy fields
-   (`would_refuse`) to `impact_analysis` instead.
-3. **First-release type list.** Default: OA layer only (R3). Alternative: all
-   types the spike verifies in phase 1.
-4. **Diagrams rooted at the deleted element.** Default: let Capella delete
-   them and report them in `diagrams_deleted`. Alternative: refuse unless
-   `cascade=true`, because losing a whole diagram may surprise the user more
-   than losing an exchange.
-5. **Attach mode.** Default: supported through `_dispatch()`, no forced save.
-   Risk: the semantic delete may need the UI thread or open a dialog in a live
-   GUI. If the spike finds that, fall back to spawn-only (`_run_script()`)
-   like the diagram tools.
-6. **Protected list.** Default: model root, five layer roots, root packages,
-   root function/component/entity. Open: should non-root packages with
-   content (e.g. a user-made `OperationalActivityPkg`) need `cascade` (yes,
-   by R4) or be refused outright?
-7. **Result cap.** Default: 200 items in `removed`, same max as the query
-   tools.
+- **`delete_check` on the plugin's live backend.** `impact_analysis` has the
+  same name and result shape in the plugin's live Java tools (PRD-09 shared
+  contract). Should the live backend add `delete_check` too, and should the
+  shared contract list it? Until decided, it is an optional field that only
+  this server fills.
 
 ## Out of scope
 
