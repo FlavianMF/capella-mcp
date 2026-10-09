@@ -1,0 +1,713 @@
+{
+  "generator": "scripts/dump_tool_schemas.py",
+  "schemaVersion": 1,
+  "tools": [
+    {
+      "description": "Add an existing model element to an existing diagram, without\n        recreating the diagram or touching any node already in it.\n\n        Use this right after create_element when the new element should be\n        visible somewhere the user already looks -- create_element itself\n        never touches any diagram, and every create_*_diagram tool always\n        (re)creates a brand new diagram (duplicating, not updating, if one\n        with that content already exists). Call list_diagrams first to find\n        a candidate diagram_uid.\n\n        diagram_uid must be an existing diagram. element_id must already\n        exist in the model and be a type this diagram's Sirius mapping\n        accepts:\n          - Breakdown diagrams (create_diagram): element_id must be a\n            descendant of THIS diagram's own root -- parent_element_id is\n            not applicable (breakdown diagrams are flat, never nested).\n            Capella auto-synchronizes a breakdown diagram's DIRECT children\n            on every save regardless of this call -- add_to_diagram mainly\n            matters here for elements beyond the diagram's original\n            max_depth, or added after the diagram already existed.\n          - Container/Class/Capability Blank diagrams\n            (create_container_diagram, create_class_diagram,\n            create_capability_diagram): element_id must match the diagram's\n            accepted types (Entity/Actor, DataPkg/Class, or\n            Entity/Actor/OperationalCapability respectively). Adding an\n            Entity/Actor or OperationalCapability to an Operational\n            Capabilities Blank also auto-creates involvement edges to\n            whichever of the other kind are already present in the diagram\n            (mirrors create_capability_diagram's own default). Class\n            elements must pass parent_element_id (an existing DataPkg node\n            in this diagram); parent_element_id is optional for\n            DataPkg/Entity/Actor (omit to add as a new top-level node), and\n            not applicable for OperationalCapability (always a free node).\n          - Scenario diagrams (create_scenario_diagram) are NOT supported --\n            their content is ordered InstanceRoles/SequenceMessages, not\n            simple containment; build them via create_element instead.\n\n        Any unsupported (diagram_type, element_type) combination raises an\n        error naming exactly what's wrong -- never silently returns success\n        without the element actually appearing. If element_id is already\n        present, returns {\"already_present\": true, ...} instead of\n        duplicating.\n\n        Only positions the NEW node (appended past the diagram's current\n        bounding box) -- existing nodes are never moved. Call\n        layout_diagram afterward if you want the whole diagram rearranged.\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_uid": {
+            "title": "Diagram Uid",
+            "type": "string"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          },
+          "parent_element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent Element Id"
+          }
+        },
+        "required": [
+          "model_path",
+          "diagram_uid",
+          "element_id"
+        ],
+        "title": "add_to_diagramArguments",
+        "type": "object"
+      },
+      "name": "add_to_diagram"
+    },
+    {
+      "description": "Create a real Capella (Sirius) \"Operational Capabilities Blank\"\n        (OCB) diagram and save the model.\n\n        Use this for an OA overview of Entities/Actors together with their\n        Operational Capabilities -- it overlaps with\n        create_container_diagram's OperationalEntity/Actor combo but\n        additionally nests each entity's involved capabilities inside its\n        container; use create_container_diagram instead if capabilities\n        don't need to be shown. Call list_diagrams first to check a\n        suitable diagram doesn't already exist.\n\n        OA-layer only. Covers the whole forest of root Operational\n        Entities/Actors (like create_container_diagram's OperationalEntity\n        combination), and additionally nests each entity's involved\n        Operational Capabilities inside its container. A capability\n        involved by more than one entity appears once per involving entity\n        (valid Sirius behavior, not a duplicate bug).\n\n        Renders correctly in export_diagram's headless PNG (see\n        CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause\n        investigation and fix).\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Diagram Name"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path"
+        ],
+        "title": "create_capability_diagramArguments",
+        "type": "object"
+      },
+      "name": "create_capability_diagram"
+    },
+    {
+      "description": "Create a real Capella (Sirius) \"Class Diagram Blank\" and save the\n        model, rooted at the layer's own default DataPkg -- recurses through\n        nested DataPkgs and every Class owned along the way.\n\n        Use this only for the data model (DataPkg/Class) -- never for\n        Entities, Actors, Activities, Functions or Components; none of the\n        other 4 diagram tools cover DataPkg/Class. Call list_diagrams first\n        to check a suitable diagram doesn't already exist.\n\n        layer must be one of: oa, sa, la, pa, epbs (every layer has a\n        DataPkg). To populate it first, create_element supports type_name\n        \"DataPkg\" (parent_id = an existing DataPkg) and \"Class\" (parent_id =\n        an existing DataPkg).\n\n        Renders correctly in export_diagram's headless PNG (see\n        CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause\n        investigation and fix).\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Diagram Name"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "max_depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Depth"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "layer"
+        ],
+        "title": "create_class_diagramArguments",
+        "type": "object"
+      },
+      "name": "create_class_diagram"
+    },
+    {
+      "description": "Create a real Capella (Sirius) \"Blank\" diagram and save the model --\n        the ContainerMapping-based diagram family, distinct from\n        create_diagram's NodeMapping-based \"breakdown\" trees.\n\n        Use this when the request is \"show all Entities/Actors/Activities of\n        the layer\" as a whole set -- always includes every root-level\n        element of that type, cannot filter to a subset. For \"only X and Y\",\n        use create_scenario_diagram instead; for one element's own subtree,\n        use create_diagram. Call list_diagrams first to check a suitable\n        diagram doesn't already exist.\n\n        layer must be one of: oa, sa, la, pa, epbs. Supported (layer,\n        type_name) combinations: OperationalEntity/oa and OperationalActor/oa\n        (\"Operational Entity Blank\" -- containment only, no edges) and\n        OperationalActivity/oa (\"Operational Activity Interaction Blank\" --\n        also adds functional-exchange edges between the placed activities).\n        Unlike create_diagram, there is no root_id -- this always covers the\n        WHOLE forest of root-level elements of that type in the layer (a\n        Blank diagram shows a package's entire structure, not one element's\n        subtree).\n\n        Renders correctly in export_diagram's headless PNG (see\n        CONTAINER_DIAGRAMS' comment in bridge.py for the root-cause\n        investigation of the blank-render bug this used to have, and the\n        fix -- DiagramServices.createContainer() instead of\n        python4capella's apply_mapping()).\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Diagram Name"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "max_depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Depth"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          },
+          "type_name": {
+            "title": "Type Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "layer",
+          "type_name"
+        ],
+        "title": "create_container_diagramArguments",
+        "type": "object"
+      },
+      "name": "create_container_diagram"
+    },
+    {
+      "description": "Create a real Capella (Sirius) breakdown diagram for ONE element's\n        subtree and save the model -- fully automatic, including layout\n        (python4capella has no auto-arrange, so bounds are computed and\n        written explicitly).\n\n        Use this when the request is about the breakdown/hierarchy of one\n        specific element and its children -- NOT for \"show all X in the\n        layer\" as a whole set (use create_container_diagram), not for an\n        overview with Operational Capabilities (use\n        create_capability_diagram), and not for an exact subset of elements\n        or an interaction between them (use create_scenario_diagram). Call\n        list_diagrams first to check a suitable diagram doesn't already\n        exist.\n\n        layer must be one of: oa, sa, la, pa, epbs. Supported (layer,\n        type_name) combinations: OperationalActivity/oa, OperationalEntity/oa,\n        OperationalActor/oa, SystemFunction/sa, LogicalFunction/la,\n        LogicalComponent/la, PhysicalFunction/pa, PhysicalComponent/pa,\n        ConfigurationItem/epbs, Region/la (a \"Mode State Machine\" diagram of\n        that Region's direct States/Modes -- root_id is required for this\n        one, there's no layer-wide package to auto-resolve a Region from;\n        include_relations does not yet add StateTransition edges for this\n        combination, states-only for now). Either pass root_id\n        (the diagram covers that element's subtree, type_name inferred) or\n        type_name with no root_id (only valid if exactly one root-level\n        element of that type exists in the layer). include_relations also\n        adds functional-exchange edges found among the placed elements.\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Diagram Name"
+          },
+          "include_relations": {
+            "default": true,
+            "title": "Include Relations",
+            "type": "boolean"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "max_depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Depth"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          },
+          "root_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Root Id"
+          },
+          "type_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type Name"
+          }
+        },
+        "required": [
+          "model_path",
+          "layer"
+        ],
+        "title": "create_diagramArguments",
+        "type": "object"
+      },
+      "name": "create_diagram"
+    },
+    {
+      "description": "Create a new element in a Capella model and save the model.\n\n        layer must be one of: oa, sa, la, pa, epbs. type_name is a Capella\n        metamodel class name (e.g. \"LogicalComponent\"). If parent_id is\n        omitted, the element is added directly under the layer's root.\n\n        Locked (bridge.model_lock) for the whole call so a concurrent\n        fast_reader read never observes a partially-written model -- see\n        docs/decisions/0005-camada-leitura-capellambse.md.\n\n        Only these type_names have a validated containment path and will\n        actually persist: LogicalComponent, SystemFunction, LogicalFunction,\n        OperationalActivity, OperationalActor, OperationalEntity,\n        OperationalCapability, StateMachine (parent_id = a Component),\n        Region (parent_id = a StateMachine), State/Mode (parent_id = a\n        Region), DataPkg/Class (parent_id = an existing DataPkg -- every\n        layer already has a default one), FunctionalExchange (parent_id =\n        the owning Function -- typically the nearest common ancestor of\n        source/target; attributes must include source_id/target_id, the\n        element ids of two existing Functions of the same kind as the\n        layer, e.g. two OperationalActivity ids for layer=\"oa\" -- a\n        FunctionOutputPort/FunctionInputPort pair is created on them and\n        wired to the exchange automatically), Scenario (parent_id = an\n        existing OperationalCapability), InstanceRole (parent_id = an\n        existing Scenario; attributes must include represented_instance_id,\n        the element id of an existing Entity/Actor/Function to represent),\n        SequenceMessage (parent_id = an existing Scenario; attributes must\n        include source_id/target_id, the element ids of two existing\n        InstanceRoles in that Scenario, and may include kind --\n        \"SYNCHRONOUS_CALL\" (default) or \"ASYNCHRONOUS_CALL\"). Any other\n        type_name silently fails to persist -- the call returns success\n        with a valid id, but the element never actually appears in the\n        model on a later call.\n\n        A newly created element never appears in any diagram by itself --\n        call list_diagrams and then add_to_diagram(diagram_uid, element_id)\n        to make it visible somewhere the user already looks.\n        ",
+      "inputSchema": {
+        "properties": {
+          "attributes": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attributes"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent Id"
+          },
+          "type_name": {
+            "title": "Type Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "layer",
+          "type_name",
+          "name"
+        ],
+        "title": "create_elementArguments",
+        "type": "object"
+      },
+      "name": "create_element"
+    },
+    {
+      "description": "Create a real Capella (Sirius) sequence/scenario diagram and save\n        the model -- OES (\"Operational Interaction Scenario\") or OAS\n        (\"Activity Interaction Scenario\"), OA-layer only.\n\n        Use this when the request names an EXACT subset of elements to\n        appear together (e.g. \"only X and Y\"), or an interaction/sequence\n        between them -- this is the only diagram tool that can restrict\n        which elements are shown, at the cost of first building a\n        Scenario/InstanceRoles/SequenceMessages via create_element (see that\n        tool's docstring). For the whole set of a type, use\n        create_container_diagram instead. Call list_diagrams first to check\n        a suitable diagram doesn't already exist.\n\n        scenario_id must be an existing Scenario -- build it, its\n        InstanceRoles, and its SequenceMessages first via create_element\n        (see that tool's docstring); a Scenario itself requires an existing\n        OperationalCapability as parent_id. If no OperationalCapability\n        exists yet in the layer, building one just as scaffolding for the\n        Scenario is a structural side effect beyond what was explicitly\n        asked -- prefer confirming with the user (via ask_user_question, if\n        available) before creating it, rather than deciding silently.\n        scenario_kind is \"OES\" (default, InstanceRoles represent\n        Entities/Actors) or \"OAS\" (InstanceRoles represent\n        OperationalActivities).\n\n        Renders correctly in export_diagram's headless PNG (see the\n        _SCENARIO_DIAGRAM_MAPPINGS/create_scenario_diagram comment in\n        bridge.py for the root-cause investigation and fix -- this diagram\n        family needed a different fix than every other diagram type in this\n        module, an explicit re-run of Sirius's own sequence-diagram\n        ordering-repair chain).\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Diagram Name"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          },
+          "scenario_id": {
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "scenario_kind": {
+            "default": "OES",
+            "title": "Scenario Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "scenario_id"
+        ],
+        "title": "create_scenario_diagramArguments",
+        "type": "object"
+      },
+      "name": "create_scenario_diagram"
+    },
+    {
+      "description": "Delete a diagram from a Capella model and save the model.\n\n        diagram_uid is the value returned as \"diagram_uid\" by create_diagram\n        or \"uid\" by the capella://{model_path}/diagrams resource.\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_uid": {
+            "title": "Diagram Uid",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "diagram_uid"
+        ],
+        "title": "delete_diagramArguments",
+        "type": "object"
+      },
+      "name": "delete_diagram"
+    },
+    {
+      "description": "Export every diagram in the model to image files (via Capella's\n        native headless export, not an addon), saved next to the model in a\n        `<model>_diagram_exports/` folder.",
+      "inputSchema": {
+        "properties": {
+          "image_format": {
+            "default": "PNG",
+            "title": "Image Format",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path"
+        ],
+        "title": "export_diagramArguments",
+        "type": "object"
+      },
+      "name": "export_diagram"
+    },
+    {
+      "description": "List every element that references element_id through a\n        non-containment reference (allocations, traces, typed parts...).\n        Each item's relation is the referencing attribute name, direction\n        \"in\". include_diagrams adds the diagrams showing the element (type\n        \"Diagram\", relation \"shown_in\"). max_results default 50, max 200.\n        ",
+      "inputSchema": {
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "include_diagrams": {
+            "default": false,
+            "title": "Include Diagrams",
+            "type": "boolean"
+          },
+          "max_results": {
+            "default": 50,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "element_id"
+        ],
+        "title": "find_referencesArguments",
+        "type": "object"
+      },
+      "name": "find_references"
+    },
+    {
+      "description": "Get the elements currently placed in one existing diagram by uid\n        (from list_diagrams, or \"diagram_uid\"/\"uid\" returned by a previous\n        create_*_diagram call).\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_uid": {
+            "title": "Diagram Uid",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "diagram_uid"
+        ],
+        "title": "get_diagramArguments",
+        "type": "object"
+      },
+      "name": "get_diagram"
+    },
+    {
+      "description": "Get a single element by id from a Capella model.\n\n        Returns {id, label, type} plus, when served by the fast reader,\n        \"relations\": a map of relation name -> [{id, label, type}] (e.g.\n        involved_entities, involved_capabilities, allocated_activities,\n        allocated_to, allocated_functions, exchanges, realized_functions,\n        realizing_components). Each list is capped at 25 items;\n        \"relations_truncated\" gives the full count for any capped list.\n        For full, depth-walked link sets use trace_element, list_exchanges,\n        find_references or impact_analysis.\n        ",
+      "inputSchema": {
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "element_id"
+        ],
+        "title": "get_elementArguments",
+        "type": "object"
+      },
+      "name": "get_element"
+    },
+    {
+      "description": "What a delete of element_id would touch, in one call. Items by\n        relation: contained (owned elements, walked to max_depth),\n        referenced_by, trace (allocations/realizations, both directions),\n        exchange, diagram (diagrams showing it or a contained element).\n        counts gives items per relation before the max_results cut.\n        max_depth default 2, max 4; max_results default 50, max 200.\n        ",
+      "inputSchema": {
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "max_depth": {
+            "default": 2,
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "max_results": {
+            "default": 50,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "element_id"
+        ],
+        "title": "impact_analysisArguments",
+        "type": "object"
+      },
+      "name": "impact_analysis"
+    },
+    {
+      "description": "Apply Capella's native 'Layout > All' to rearrange all elements in\n        an existing diagram, same as right-click -> Layout -> All.\n\n        Works for all diagram types (breakdown, container, class, capability,\n        scenario). Uses Sirius's own layout pipeline so it respects pinned\n        elements and registered layout providers. Falls back to a custom\n        deterministic tree layout when the native pipeline is unavailable.\n\n        diagram_uid is the value returned as \"diagram_uid\" by create_diagram\n        or \"uid\" by the capella://{model_path}/diagrams resource.\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_uid": {
+            "title": "Diagram Uid",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "diagram_uid"
+        ],
+        "title": "layout_diagramArguments",
+        "type": "object"
+      },
+      "name": "layout_diagram"
+    },
+    {
+      "description": "List every diagram already saved in a Capella model, with uid, name\n        and diagram type -- check this before deciding whether to create a new\n        diagram or an existing one already satisfies the request.\n        ",
+      "inputSchema": {
+        "properties": {
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path"
+        ],
+        "title": "list_diagramsArguments",
+        "type": "object"
+      },
+      "name": "list_diagrams"
+    },
+    {
+      "description": "List elements in one Arcadia layer of a Capella model.\n\n        layer must be one of: oa, sa, la, pa, epbs. type_filter, if given, is\n        a Capella metamodel type name (e.g. \"LogicalComponent\").\n        ",
+      "inputSchema": {
+        "properties": {
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          },
+          "type_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type Filter"
+          }
+        },
+        "required": [
+          "model_path",
+          "layer"
+        ],
+        "title": "list_elementsArguments",
+        "type": "object"
+      },
+      "name": "list_elements"
+    },
+    {
+      "description": "List the exchanges whose source or target is element_id or one of\n        its ports. kind: \"functional\", \"component\", \"physical\" or \"all\".\n        Each item is the exchange; relation is its kind, direction \"out\" or\n        \"in\", viaId the element at the other end. max_results default 50,\n        max 200.\n        ",
+      "inputSchema": {
+        "properties": {
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "all",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max_results": {
+            "default": 50,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "element_id"
+        ],
+        "title": "list_exchangesArguments",
+        "type": "object"
+      },
+      "name": "list_exchanges"
+    },
+    {
+      "description": "List the Arcadia layers (OA/SA/LA/PA/EPBS) present in a Capella model.",
+      "inputSchema": {
+        "properties": {
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path"
+        ],
+        "title": "list_layersArguments",
+        "type": "object"
+      },
+      "name": "list_layers"
+    },
+    {
+      "description": "Remove an element's node (view) from a diagram -- this does NOT\n        delete the element from the model; hiding is not deleting.\n\n        This tool never deletes a model element, and neither does any other\n        tool on this server: there is no model-delete tool yet (only\n        delete_diagram). If the user asks to delete an element from the\n        model, do not use this tool -- tell them the server cannot do it\n        yet. It also works WITHOUT recreating the diagram.\n\n        NOT supported for breakdown diagrams (create_diagram) -- raises an\n        error explaining why: Capella re-synchronizes a breakdown diagram's\n        direct semantic children on every save regardless of this call, so\n        a node removed here would silently reappear on the next save of ANY\n        tool in this session. To merely hide the element there, use\n        delete_diagram + create_diagram (with a lower max_depth, or\n        excluding that subtree) instead. NOT supported\n        for scenario diagrams either, same structural reason as\n        add_to_diagram (ordered InstanceRoles/SequenceMessages, not simple\n        containment).\n\n        Supported for Container/Class/Capability Blank diagrams\n        (create_container_diagram, create_class_diagram,\n        create_capability_diagram): removing a container also removes every\n        node nested inside it, and any diagram edge connected to the\n        removed node(s) is cleaned up too -- never left dangling.\n\n        Raises an error if element_id is not currently placed in this\n        diagram at all -- never a silent no-op.\n        ",
+      "inputSchema": {
+        "properties": {
+          "diagram_uid": {
+            "title": "Diagram Uid",
+            "type": "string"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "diagram_uid",
+          "element_id"
+        ],
+        "title": "remove_from_diagramArguments",
+        "type": "object"
+      },
+      "name": "remove_from_diagram"
+    },
+    {
+      "description": "Follow Capella traces (allocations, realizations) from element_id.\n        relation: \"allocation\", \"realization\" or \"all\". direction: \"out\"\n        (element is the trace source, e.g. a component allocating a\n        function, or a lower-layer element realizing an upper one), \"in\"\n        (element is the target, e.g. \"what allocates this function?\") or\n        \"both\". Each item's relation is the trace class name (e.g.\n        ComponentFunctionalAllocation, FunctionRealization). max_depth\n        default 2, max 4; max_results default 50, max 200.\n        ",
+      "inputSchema": {
+        "properties": {
+          "direction": {
+            "default": "both",
+            "title": "Direction",
+            "type": "string"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "max_depth": {
+            "default": 2,
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "max_results": {
+            "default": 50,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          },
+          "relation": {
+            "default": "all",
+            "title": "Relation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "element_id"
+        ],
+        "title": "trace_elementArguments",
+        "type": "object"
+      },
+      "name": "trace_element"
+    },
+    {
+      "description": "Update attributes of an existing element in a Capella model and save the model.\n\n        Locked (bridge.model_lock) for the whole call -- see\n        docs/decisions/0005-camada-leitura-capellambse.md.\n        ",
+      "inputSchema": {
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "element_id": {
+            "title": "Element Id",
+            "type": "string"
+          },
+          "model_path": {
+            "title": "Model Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_path",
+          "element_id",
+          "attributes"
+        ],
+        "title": "update_elementArguments",
+        "type": "object"
+      },
+      "name": "update_element"
+    }
+  ]
+}
